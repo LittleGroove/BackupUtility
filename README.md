@@ -67,7 +67,7 @@ There is no installer. Each release on the
 | | |
 |---|---|
 | `BackupUtility-vX.Y.Z-windows-x86_64.zip` | Windows 10 and 11. Unzip anywhere that will stay put (scheduled tasks point at `bkengine.exe` by its absolute path), then run `bkgui.exe`. It asks for Administrator once per launch. |
-| `BackupUtility-vX.Y.Z-linux-x86_64.tar.gz` | Linux, including SteamOS. Untar and run `sh install.sh`: it puts the binaries under `~/.local/share/BackupUtility`, links them into `~/.local/bin`, and adds an application-menu entry. No root needed. Run it as root to install under `/opt` instead. |
+| `BackupUtility-vX.Y.Z-linux-x86_64.tar.gz` | Linux, including SteamOS. Untar and run `sh install.sh`: it puts the binaries under `~/.local/share/BackupUtility`, links them into `~/.local/bin`, and adds an application-menu entry. No root needed. Run it as root to install under `/opt` instead. The window needs the usual desktop libraries (`libxkbcommon`, `libxkbcommon-x11`, GTK 3), which every desktop distribution and SteamOS already have; `bkengine` needs nothing. |
 
 The bare `bkengine-*` / `bkgui-*` files and `SHA256SUMS` are what the updater
 downloads; you do not need them by hand.

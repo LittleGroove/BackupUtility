@@ -175,11 +175,19 @@ def pick_wsl_distro(preferred):
 
 
 def wsl_path(distro, windows_path):
-    res = subprocess.run(["wsl.exe", "-d", distro, "--", "wslpath", "-a", str(windows_path)],
+    """`S:\\x\\y` -> `/mnt/s/x/y`. Backslashes do not survive the wsl.exe command
+    line, so the path is handed to wslpath with forward slashes, and the
+    conventional mapping is the fallback for an unusual mount layout."""
+    forward = str(windows_path).replace("\\", "/")
+    res = subprocess.run(["wsl.exe", "-d", distro, "--", "wslpath", "-a", forward],
                          capture_output=True, text=True)
-    if res.returncode != 0:
-        die(f"wslpath failed for {windows_path}: {res.stderr}")
-    return res.stdout.strip()
+    out = (res.stdout or "").strip()
+    if res.returncode == 0 and out.startswith("/"):
+        return out
+    drive, _, rest = forward.partition(":")
+    if len(drive) == 1 and drive.isalpha():
+        return f"/mnt/{drive.lower()}{rest if rest.startswith('/') else '/' + rest}".rstrip("/")
+    die(f"cannot map {windows_path} into WSL: {res.stderr.strip()}")
 
 
 def build_linux_in_wsl(distro, out_dir, skip_tests):
