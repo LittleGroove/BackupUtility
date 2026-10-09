@@ -338,6 +338,9 @@ def main():
             say(f"committed the bump ({git('rev-parse', '--short', 'HEAD').stdout.strip()})")
         version = new
     tag = f"v{version}"
+    if git("tag", "-l", tag).stdout.strip():
+        die(f"{tag} is already tagged, so it has been published; the publisher would refuse it.\n"
+            f"  build the next version instead: --bump patch | --bump minor | --bump major, or --version X.Y.Z")
     commit = git("rev-parse", "HEAD").stdout.strip()
 
     out = STAGING / tag
