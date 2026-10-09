@@ -30,3 +30,8 @@ Rules for Claude:
 After moving the folder to a new PC: open it in Claude Code once (the
 SessionStart hook rewrites `settings.local.json` and restores transcripts),
 then start a fresh session so memory loads from `.claude/memory/`.
+
+## Commits
+
+No AI attribution of any kind: no `Co-Authored-By` trailers, no "generated with" lines in
+commit messages, pull requests or release notes. Subject and body only.
