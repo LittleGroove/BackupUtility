@@ -306,11 +306,7 @@ impl SaveState {
     }
 
     /// Start a fresh run, discarding any previous state for this job.
-    pub fn create(
-        state_root: &Path,
-        run: RunState,
-        plan: &Plan,
-    ) -> Result<Self> {
+    pub fn create(state_root: &Path, run: RunState, plan: &Plan) -> Result<Self> {
         let dir = Self::dir_for(state_root, &run.job);
         fs::create_dir_all(&dir)?;
 
@@ -321,7 +317,13 @@ impl SaveState {
         // lives here too and is deliberately a history *across* runs. Wiping
         // the directory would delete the log of the run currently in progress,
         // which is exactly what it did before this was narrowed.
-        for f in ["run.json", "plan.jsonl", "done.bin", "errors.jsonl", "progress.json"] {
+        for f in [
+            "run.json",
+            "plan.jsonl",
+            "done.bin",
+            "errors.jsonl",
+            "progress.json",
+        ] {
             let p = dir.join(f);
             if p.exists() {
                 fs::remove_file(&p)?;
@@ -463,7 +465,10 @@ impl SaveState {
             return Ok(Vec::new());
         }
         let mut out = Vec::new();
-        for line in BufReader::new(File::open(path)?).lines().map_while(|l| l.ok()) {
+        for line in BufReader::new(File::open(path)?)
+            .lines()
+            .map_while(|l| l.ok())
+        {
             // A truncated final line (the run was killed mid-append) is
             // skipped rather than failing the whole report.
             if let Ok(e) = serde_json::from_str(&line) {
@@ -566,7 +571,9 @@ fn write_plan(path: &Path, plan: &Plan) -> Result<()> {
         let line = serde_json::to_string(a).map_err(|e| BkError::Other(e.into()))?;
         writeln!(f, "{line}")?;
     }
-    let f = f.into_inner().map_err(|e| BkError::Other(anyhow::anyhow!("{e}")))?;
+    let f = f
+        .into_inner()
+        .map_err(|e| BkError::Other(anyhow::anyhow!("{e}")))?;
     f.sync_all()?;
     Ok(())
 }
@@ -579,9 +586,8 @@ fn read_plan(path: &Path) -> Result<Vec<Action>> {
         if line.trim().is_empty() {
             continue;
         }
-        let a: Action = serde_json::from_str(&line).map_err(|e| {
-            BkError::Other(anyhow::anyhow!("plan.jsonl line {}: {e}", i + 1))
-        })?;
+        let a: Action = serde_json::from_str(&line)
+            .map_err(|e| BkError::Other(anyhow::anyhow!("plan.jsonl line {}: {e}", i + 1)))?;
         out.push(a);
     }
     Ok(out)
@@ -748,7 +754,13 @@ mod tests {
         for i in 4..10 {
             assert!(!s2.is_done(i), "action {i} still needs doing");
         }
-        assert!(s2.can_resume(Path::new("D:/src"), Path::new("E:/dst"), MirrorMode::Additive).is_yes());
+        assert!(s2
+            .can_resume(
+                Path::new("D:/src"),
+                Path::new("E:/dst"),
+                MirrorMode::Additive
+            )
+            .is_yes());
     }
 
     #[test]
@@ -781,7 +793,11 @@ mod tests {
 
         // The trap: resuming a plan built for a different destination would
         // write the wrong files to the wrong disk.
-        let bad = s2.can_resume(Path::new("D:/src"), Path::new("F:/other"), MirrorMode::Additive);
+        let bad = s2.can_resume(
+            Path::new("D:/src"),
+            Path::new("F:/other"),
+            MirrorMode::Additive,
+        );
         assert!(!bad.is_yes());
         assert!(bad.reason().unwrap().contains("destination"));
 
@@ -796,7 +812,11 @@ mod tests {
         let _s = SaveState::create(&t.0, run_state("j"), &plan_of(1)).unwrap();
         let (s2, _) = SaveState::load(&t.0, "j").unwrap().unwrap();
         assert!(s2
-            .can_resume(Path::new(r"d:\SRC"), Path::new(r"E:\Dst\"), MirrorMode::Additive)
+            .can_resume(
+                Path::new(r"d:\SRC"),
+                Path::new(r"E:\Dst\"),
+                MirrorMode::Additive
+            )
             .is_yes());
     }
 
@@ -811,7 +831,11 @@ mod tests {
         assert_eq!(s2.run().status, RunStatus::Completed);
         assert_eq!(s2.run().finished_unix, Some(1_700_000_100));
         assert!(!s2
-            .can_resume(Path::new("D:/src"), Path::new("E:/dst"), MirrorMode::Additive)
+            .can_resume(
+                Path::new("D:/src"),
+                Path::new("E:/dst"),
+                MirrorMode::Additive
+            )
             .is_yes());
     }
 

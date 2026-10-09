@@ -162,11 +162,7 @@ pub fn list(attic_root: &Path, measure: bool) -> Result<Vec<AtticEntry>> {
 ///
 /// `now_unix` is passed in rather than read from the clock so the decision is
 /// deterministic and testable.
-pub fn prune(
-    attic_root: &Path,
-    policy: &AtticPolicy,
-    now_unix: u64,
-) -> Result<PruneReport> {
+pub fn prune(attic_root: &Path, policy: &AtticPolicy, now_unix: u64) -> Result<PruneReport> {
     let mut report = PruneReport::default();
     if !policy.prunes_anything() {
         return Ok(report);
@@ -214,7 +210,11 @@ pub fn prune(
     doomed.dedup();
     for i in doomed {
         let e = &entries[i];
-        let bytes = if e.bytes > 0 { e.bytes } else { dir_size(&e.path) };
+        let bytes = if e.bytes > 0 {
+            e.bytes
+        } else {
+            dir_size(&e.path)
+        };
         match copy::force_remove(&e.path) {
             Ok(()) => {
                 report.folders_removed += 1;
@@ -370,7 +370,10 @@ mod tests {
         };
         prune(&t.0, &policy, NOW).unwrap();
 
-        assert!(mine.exists(), "an unparseable folder name must be untouched");
+        assert!(
+            mine.exists(),
+            "an unparseable folder name must be untouched"
+        );
         assert_eq!(std::fs::read(mine.join("keep.txt")).unwrap(), b"mine");
     }
 
@@ -398,7 +401,10 @@ mod tests {
     fn the_default_policy_bounds_growth_without_being_aggressive() {
         let p = AtticPolicy::default();
         assert_eq!(p.keep_runs, Some(10));
-        assert!(p.prunes_anything(), "an unbounded attic is what fills the drive");
+        assert!(
+            p.prunes_anything(),
+            "an unbounded attic is what fills the drive"
+        );
         assert!(!AtticPolicy::keep_everything().prunes_anything());
         assert!(p.describe().contains("10 runs"));
     }

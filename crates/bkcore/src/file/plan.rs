@@ -400,8 +400,7 @@ fn assemble(
     metas: Vec<Action>,
     dir_metas: Vec<Action>,
 ) -> Vec<Action> {
-    let mut out =
-        Vec::with_capacity(dirs.len() + removals.len() + content.len() + dir_metas.len());
+    let mut out = Vec::with_capacity(dirs.len() + removals.len() + content.len() + dir_metas.len());
     // Removals first: they free space before we start writing, which matters
     // when the destination is nearly full, and they clear wrong-kind entries
     // out of the way of the content phase.
@@ -486,7 +485,6 @@ pub fn human_bytes(n: u64) -> String {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -533,7 +531,10 @@ mod tests {
     }
 
     fn pos(plan: &Plan, pred: impl Fn(&Action) -> bool) -> usize {
-        plan.actions.iter().position(pred).expect("action not found")
+        plan.actions
+            .iter()
+            .position(pred)
+            .expect("action not found")
     }
 
     #[test]
@@ -599,7 +600,10 @@ mod tests {
         let dst = tree(vec![dst_entry]);
 
         let exact = build(&src, &dst, MirrorMode::Additive, &policy());
-        assert_eq!(exact.stats.files_to_update, 1, "exact comparison sees a change");
+        assert_eq!(
+            exact.stats.files_to_update, 1,
+            "exact comparison sees a change"
+        );
 
         let forgiving = ComparePolicy {
             tolerance_nanos: crate::file::meta::TOLERANCE_FAT,
@@ -652,7 +656,10 @@ mod tests {
         let file_at = pos(&plan, |a| a.rel().as_str() == "old/deeper/x.txt");
         let deeper_at = pos(&plan, |a| a.rel().as_str() == "old/deeper");
         let old_at = pos(&plan, |a| a.rel().as_str() == "old");
-        assert!(file_at < deeper_at, "file must be removed before its directory");
+        assert!(
+            file_at < deeper_at,
+            "file must be removed before its directory"
+        );
         assert!(deeper_at < old_at, "child dir must go before its parent");
     }
 
@@ -670,8 +677,14 @@ mod tests {
     fn directories_are_created_before_the_files_inside_them() {
         let src = tree(vec![d("a"), d("a/b"), f("a/b/c.txt", 5, 1)]);
         let plan = build(&src, &tree(vec![]), MirrorMode::Additive, &policy());
-        let a = pos(&plan, |x| matches!(x, Action::CreateDir { rel } if rel.as_str() == "a"));
-        let ab = pos(&plan, |x| matches!(x, Action::CreateDir { rel } if rel.as_str() == "a/b"));
+        let a = pos(
+            &plan,
+            |x| matches!(x, Action::CreateDir { rel } if rel.as_str() == "a"),
+        );
+        let ab = pos(
+            &plan,
+            |x| matches!(x, Action::CreateDir { rel } if rel.as_str() == "a/b"),
+        );
         let file = pos(&plan, |x| matches!(x, Action::CopyFile { .. }));
         assert!(a < ab && ab < file);
     }
@@ -700,7 +713,12 @@ mod tests {
         let mut b = f("b.bin", 1_000_000, 1);
         a.file_id = Some(id);
         b.file_id = Some(id);
-        let plan = build(&tree(vec![a, b]), &tree(vec![]), MirrorMode::Additive, &policy());
+        let plan = build(
+            &tree(vec![a, b]),
+            &tree(vec![]),
+            MirrorMode::Additive,
+            &policy(),
+        );
 
         assert_eq!(plan.stats.files_to_copy, 1, "the bytes are stored once");
         assert_eq!(plan.stats.hardlinks, 1);
@@ -758,7 +776,12 @@ mod tests {
         s.attrs = attr::READONLY | attr::HIDDEN;
         let mut dv = f("x.txt", 100, 500);
         dv.attrs = 0;
-        let plan = build(&tree(vec![s]), &tree(vec![dv]), MirrorMode::Additive, &policy());
+        let plan = build(
+            &tree(vec![s]),
+            &tree(vec![dv]),
+            MirrorMode::Additive,
+            &policy(),
+        );
 
         assert_eq!(plan.stats.meta_to_fix, 1);
         assert_eq!(plan.stats.files_to_update, 0, "must not re-copy 100 bytes");

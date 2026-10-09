@@ -24,7 +24,7 @@ fn scratch(tag: &str) -> PathBuf {
 }
 
 fn write_image(path: &PathBuf, n_chunks: usize) {
-    assert!(CHUNK_SIZE % SECTOR_ALIGN == 0);
+    assert!(CHUNK_SIZE.is_multiple_of(SECTOR_ALIGN));
     let mut data = vec![0u8; n_chunks * CHUNK_SIZE];
     for i in 0..n_chunks {
         data[i * CHUNK_SIZE..(i + 1) * CHUNK_SIZE].fill((i as u8).wrapping_add(1));

@@ -80,7 +80,11 @@ pub struct MirrorJob {
 
 impl MirrorJob {
     /// A job with sensible defaults for a local disk-to-disk mirror.
-    pub fn new(name: impl Into<String>, source: impl Into<PathBuf>, dest: impl Into<PathBuf>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        source: impl Into<PathBuf>,
+        dest: impl Into<PathBuf>,
+    ) -> Self {
         MirrorJob {
             name: name.into(),
             source: source.into(),
@@ -125,9 +129,15 @@ pub enum Event<'a> {
     ScanningDest(&'a ScanStats),
     Planned(&'a Plan),
     /// An earlier run is being continued.
-    Resuming { done: usize, total: usize },
+    Resuming {
+        done: usize,
+        total: usize,
+    },
     Progress(&'a Progress),
-    Failed { rel: String, message: String },
+    Failed {
+        rel: String,
+        message: String,
+    },
 }
 
 /// What a run did.
@@ -286,7 +296,9 @@ pub fn validate(job: &MirrorJob) -> Result<()> {
         )));
     }
     if job.workers == 0 {
-        return Err(BkError::Other(anyhow::anyhow!("workers must be at least 1")));
+        return Err(BkError::Other(anyhow::anyhow!(
+            "workers must be at least 1"
+        )));
     }
     Ok(())
 }
@@ -1183,4 +1195,3 @@ fn cancelled_report(job: &MirrorJob, started: u64, src: &Tree) -> MirrorReport {
         file_list: Vec::new(),
     }
 }
-

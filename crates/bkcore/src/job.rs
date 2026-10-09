@@ -243,7 +243,11 @@ impl Frequency {
 
 impl Job {
     /// A ready-to-run mirror job with sensible defaults.
-    pub fn mirror(name: impl Into<String>, source: impl Into<PathBuf>, dest: impl Into<PathBuf>) -> Self {
+    pub fn mirror(
+        name: impl Into<String>,
+        source: impl Into<PathBuf>,
+        dest: impl Into<PathBuf>,
+    ) -> Self {
         Job {
             version: JOB_VERSION,
             name: name.into(),
@@ -408,6 +412,10 @@ pub fn default_jobs_dir() -> PathBuf {
     }
 }
 
+/// What [`JobStore::list`] returns: the jobs that parsed, and the files that
+/// did not, each with the reason.
+pub type JobListing = (Vec<Job>, Vec<(PathBuf, String)>);
+
 /// A directory of job files.
 pub struct JobStore {
     dir: PathBuf,
@@ -466,7 +474,7 @@ impl JobStore {
 
     /// Every job in the directory, sorted by name. Unparseable files are
     /// reported alongside so a single bad file does not hide the rest.
-    pub fn list(&self) -> Result<(Vec<Job>, Vec<(PathBuf, String)>)> {
+    pub fn list(&self) -> Result<JobListing> {
         let mut jobs = Vec::new();
         let mut broken = Vec::new();
         for entry in std::fs::read_dir(&self.dir)? {
@@ -475,9 +483,10 @@ impl JobStore {
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
-            match std::fs::read(&path).map_err(|e| e.to_string()).and_then(|d| {
-                serde_json::from_slice::<Job>(&d).map_err(|e| e.to_string())
-            }) {
+            match std::fs::read(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|d| serde_json::from_slice::<Job>(&d).map_err(|e| e.to_string()))
+            {
                 Ok(j) => jobs.push(j),
                 Err(e) => broken.push((path, e)),
             }
@@ -678,7 +687,10 @@ mod tests {
         let job = Job::mirror(r"D: -> E: nightly", r"D:\a", r"E:\a");
         let path = store.save(&job).unwrap();
         assert!(path.exists());
-        assert_eq!(store.load(r"D: -> E: nightly").unwrap().name, r"D: -> E: nightly");
+        assert_eq!(
+            store.load(r"D: -> E: nightly").unwrap().name,
+            r"D: -> E: nightly"
+        );
     }
 
     #[test]

@@ -76,7 +76,10 @@ impl FileLayout {
 
     /// The physical cluster this file starts at, if it has any real content.
     pub fn start_lcn(&self) -> Option<i64> {
-        self.extents.iter().find(|e| e.is_allocated()).map(|e| e.lcn)
+        self.extents
+            .iter()
+            .find(|e| e.is_allocated())
+            .map(|e| e.lcn)
     }
 
     /// The physical cluster holding virtual cluster `vcn`, if allocated.
@@ -428,11 +431,7 @@ mod imp {
                 let (next_vcn, lcn) = (pair[0], pair[1]);
                 let clusters = (next_vcn - vcn).max(0) as u64;
                 if clusters > 0 {
-                    out.extents.push(Extent {
-                        vcn,
-                        lcn,
-                        clusters,
-                    });
+                    out.extents.push(Extent { vcn, lcn, clusters });
                 }
                 vcn = next_vcn;
             }
@@ -493,7 +492,7 @@ mod imp {
             let bitmap_clusters = header.BitmapSize.max(0) as u64;
             let header_bytes = std::mem::offset_of!(VOLUME_BITMAP_BUFFER, Buffer);
             let available = (returned as usize).saturating_sub(header_bytes);
-            let want = ((bitmap_clusters + 7) / 8) as usize;
+            let want = bitmap_clusters.div_ceil(8) as usize;
             let take = want.min(available);
             bits.extend_from_slice(&buf[header_bytes..header_bytes + take]);
             mapped += bitmap_clusters;
@@ -625,7 +624,12 @@ mod tests {
         let mut r = FragReport::default();
         r.record("tiny1.txt", &FileLayout::default());
         r.record("tiny2.txt", &FileLayout::default());
-        r.record("real.bin", &FileLayout { extents: vec![ext(0, 10, 100)] });
+        r.record(
+            "real.bin",
+            &FileLayout {
+                extents: vec![ext(0, 10, 100)],
+            },
+        );
 
         assert_eq!(r.files_examined, 3);
         assert_eq!(r.files_resident, 2);
@@ -647,7 +651,12 @@ mod tests {
     #[test]
     fn fragmentation_is_aggregated_across_files() {
         let mut r = FragReport::default();
-        r.record("clean.txt", &FileLayout { extents: vec![ext(0, 10, 5)] });
+        r.record(
+            "clean.txt",
+            &FileLayout {
+                extents: vec![ext(0, 10, 5)],
+            },
+        );
         r.record(
             "messy.bin",
             &FileLayout {

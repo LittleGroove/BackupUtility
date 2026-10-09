@@ -192,7 +192,10 @@ impl App {
                 self.dirty = false;
                 self.reload_jobs();
                 if let Some(Err(e)) = sched_result {
-                    self.notify(format!("saved '{name}', but the schedule failed: {e}"), true);
+                    self.notify(
+                        format!("saved '{name}', but the schedule failed: {e}"),
+                        true,
+                    );
                 } else {
                     self.notify(format!("saved '{name}'"), false);
                 }
@@ -231,8 +234,11 @@ impl App {
             let result = mirror::run(&mirror_job, &thread_cancel, &mut |event| {
                 match event {
                     Event::ScanningSource(s) => {
-                        *thread_shared.phase.lock().unwrap() =
-                            format!("scanning source — {} files, {}", s.files, human_bytes(s.bytes));
+                        *thread_shared.phase.lock().unwrap() = format!(
+                            "scanning source — {} files, {}",
+                            s.files,
+                            human_bytes(s.bytes)
+                        );
                     }
                     Event::ScanningDest(s) => {
                         *thread_shared.phase.lock().unwrap() =
@@ -357,7 +363,13 @@ fn files_under(root: &std::path::Path) -> Vec<bkcore::file::path::RelPath> {
 fn engine_beside(gui_exe: &std::path::Path) -> std::path::PathBuf {
     gui_exe
         .parent()
-        .map(|d| d.join(if cfg!(windows) { "bkengine.exe" } else { "bkengine" }))
+        .map(|d| {
+            d.join(if cfg!(windows) {
+                "bkengine.exe"
+            } else {
+                "bkengine"
+            })
+        })
         .unwrap_or_else(|| std::path::PathBuf::from("bkengine"))
 }
 
@@ -617,15 +629,32 @@ impl App {
             ui.collapsing("What to preserve", |ui| {
                 let f = &mut spec.fidelity;
                 changed |= ui.checkbox(&mut f.timestamps, "timestamps").changed();
-                changed |= ui.checkbox(&mut f.attributes, "attributes (read-only, hidden, system)").changed();
-                changed |= ui.checkbox(&mut f.acls, "security descriptors (NTFS permissions)").changed();
-                changed |= ui.checkbox(&mut f.alternate_data_streams, "alternate data streams").changed();
+                changed |= ui
+                    .checkbox(&mut f.attributes, "attributes (read-only, hidden, system)")
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut f.acls, "security descriptors (NTFS permissions)")
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut f.alternate_data_streams, "alternate data streams")
+                    .changed();
                 changed |= ui.checkbox(&mut f.sparse, "sparse regions").changed();
-                changed |= ui.checkbox(&mut f.verify, "verify every file after writing (slower)").changed();
+                changed |= ui
+                    .checkbox(&mut f.verify, "verify every file after writing (slower)")
+                    .changed();
                 ui.add_space(4.0);
-                changed |= ui.checkbox(&mut spec.preserve_hardlinks, "preserve hard links").changed();
-                changed |= ui.checkbox(&mut spec.follow_links, "follow symlinks and junctions (risky)").changed();
-                changed |= ui.checkbox(&mut spec.cross_volume, "descend into mounted volumes").changed();
+                changed |= ui
+                    .checkbox(&mut spec.preserve_hardlinks, "preserve hard links")
+                    .changed();
+                changed |= ui
+                    .checkbox(
+                        &mut spec.follow_links,
+                        "follow symlinks and junctions (risky)",
+                    )
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut spec.cross_volume, "descend into mounted volumes")
+                    .changed();
                 ui.add_space(4.0);
                 changed |= ui
                     .checkbox(
@@ -634,7 +663,10 @@ impl App {
                     )
                     .changed();
                 changed |= ui
-                    .checkbox(&mut spec.log, "write a run log (needed to review a scheduled run)")
+                    .checkbox(
+                        &mut spec.log,
+                        "write a run log (needed to review a scheduled run)",
+                    )
                     .changed();
             });
         }
@@ -685,7 +717,10 @@ impl App {
                     }
                 });
                 changed |= ui
-                    .checkbox(&mut s.run_as_system, "run as SYSTEM (works with nobody logged in)")
+                    .checkbox(
+                        &mut s.run_as_system,
+                        "run as SYSTEM (works with nobody logged in)",
+                    )
                     .changed();
                 changed |= ui
                     .checkbox(&mut s.run_if_missed, "run late if the machine was off")
@@ -763,7 +798,6 @@ impl App {
                             Ok(()) => self.notify(format!("deleted '{name}'"), false),
                             Err(e) => self.notify(format!("delete failed: {e}"), true),
                         }
-                        return;
                     }
                 }
             }
@@ -956,20 +990,25 @@ impl App {
         }
         if !errors.is_empty() {
             ui.collapsing(format!("Errors ({})", errors.len()), |ui| {
-                egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                    for e in &errors {
-                        ui.colored_label(egui::Color32::from_rgb(0xD1, 0x4A, 0x4A), e);
-                    }
-                });
+                egui::ScrollArea::vertical()
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        for e in &errors {
+                            ui.colored_label(egui::Color32::from_rgb(0xD1, 0x4A, 0x4A), e);
+                        }
+                    });
             });
         }
 
         ui.separator();
         if handle.cancel.is_cancelled() {
             ui.weak("stopping — finishing the current file and saving progress…");
-        } else if ui.button("Stop").on_hover_text(
-            "Finishes the file in flight and saves progress. The next run resumes from here.",
-        ).clicked()
+        } else if ui
+            .button("Stop")
+            .on_hover_text(
+                "Finishes the file in flight and saves progress. The next run resumes from here.",
+            )
+            .clicked()
         {
             handle.cancel.cancel();
         }

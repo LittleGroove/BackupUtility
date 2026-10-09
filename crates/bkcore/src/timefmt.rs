@@ -50,9 +50,11 @@ pub fn parse_stamp(s: &str) -> Option<u64> {
     // same second. Parse the fixed-width prefix and require any remainder to
     // be exactly that: a hyphen and digits. Anything else is not ours.
     let (head, rest) = s.split_at(s.len().min(15));
-    if !rest.is_empty()
-        && !(rest.starts_with('-') && rest.len() > 1 && rest[1..].bytes().all(|b| b.is_ascii_digit()))
-    {
+    let suffix_ok = rest.is_empty()
+        || (rest.starts_with('-')
+            && rest.len() > 1
+            && rest[1..].bytes().all(|b| b.is_ascii_digit()));
+    if !suffix_ok {
         return None;
     }
     let (date, time) = head.split_once('-')?;

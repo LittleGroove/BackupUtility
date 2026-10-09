@@ -284,7 +284,9 @@ pub fn force_remove(p: &Path) -> Result<()> {
     // A directory symlink or junction must be removed as a link, not
     // recursed into — otherwise we would delete the *target's* contents.
     if md.file_type().is_symlink() {
-        return fs::remove_dir(&lp).or_else(|_| fs::remove_file(&lp)).map_err(BkError::Io);
+        return fs::remove_dir(&lp)
+            .or_else(|_| fs::remove_file(&lp))
+            .map_err(BkError::Io);
     }
     if md.is_dir() {
         let _ = clear_readonly(p);
@@ -353,10 +355,8 @@ pub fn sweep_part_files(root: &Path) -> Result<u64> {
             let p = e.path();
             match e.file_type() {
                 Ok(t) if t.is_dir() => stack.push(p),
-                Ok(_) if p.to_string_lossy().ends_with(PART_SUFFIX) => {
-                    if force_remove(&p).is_ok() {
-                        removed += 1;
-                    }
+                Ok(_) if p.to_string_lossy().ends_with(PART_SUFFIX) && force_remove(&p).is_ok() => {
+                    removed += 1;
                 }
                 _ => {}
             }
@@ -463,6 +463,7 @@ mod imp {
     use std::ffi::c_void;
     use std::os::windows::io::FromRawHandle;
     use windows::core::PCWSTR;
+    use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Foundation::{GetLastError, LocalFree, HANDLE, HLOCAL, LUID};
     use windows::Win32::Security::Authorization::{
         GetNamedSecurityInfoW, SetNamedSecurityInfoW, SE_FILE_OBJECT,
@@ -474,11 +475,11 @@ mod imp {
         TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
     };
     use windows::Win32::Storage::FileSystem::{
-        CreateFileW, FindClose, FindFirstStreamW, FindNextStreamW, SetFileTime,
-        SetFileAttributesW, FindStreamInfoStandard, FILE_ATTRIBUTE_NORMAL,
+        CreateFileW, FindClose, FindFirstStreamW, FindNextStreamW, FindStreamInfoStandard,
+        SetFileAttributesW, SetFileTime, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
         FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
         FILE_FLAG_SEQUENTIAL_SCAN, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        CREATE_ALWAYS, OPEN_EXISTING, WIN32_FIND_STREAM_DATA,
+        OPEN_EXISTING, WIN32_FIND_STREAM_DATA,
     };
     use windows::Win32::System::Ioctl::{
         FILE_ALLOCATED_RANGE_BUFFER, FSCTL_QUERY_ALLOCATED_RANGES, FSCTL_SET_REPARSE_POINT,
@@ -486,7 +487,6 @@ mod imp {
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
     use windows::Win32::System::IO::DeviceIoControl;
-    use windows::Win32::Foundation::CloseHandle;
 
     const GENERIC_READ_U32: u32 = 0x8000_0000;
     const GENERIC_WRITE_U32: u32 = 0x4000_0000;
@@ -503,9 +503,13 @@ mod imp {
     /// to be explicitly enabled. Failing is not fatal: we simply fall back to
     /// ordinary access rights and report files we could not read.
     pub fn enable_backup_privileges() -> bool {
-        ["SeBackupPrivilege", "SeRestorePrivilege", "SeSecurityPrivilege"]
-            .iter()
-            .all(|p| enable_privilege(p))
+        [
+            "SeBackupPrivilege",
+            "SeRestorePrivilege",
+            "SeSecurityPrivilege",
+        ]
+        .iter()
+        .all(|p| enable_privilege(p))
     }
 
     fn enable_privilege(name: &str) -> bool {
@@ -696,7 +700,16 @@ mod imp {
         let mut returned: u32 = 0;
         // SAFETY: FSCTL_SET_SPARSE takes no input buffer.
         unsafe {
-            DeviceIoControl(h, FSCTL_SET_SPARSE, None, 0, None, 0, Some(&mut returned), None)
+            DeviceIoControl(
+                h,
+                FSCTL_SET_SPARSE,
+                None,
+                0,
+                None,
+                0,
+                Some(&mut returned),
+                None,
+            )
         }
         .is_ok()
     }
@@ -735,10 +748,8 @@ mod imp {
             };
             // The unnamed data stream is reported as `::$DATA`; it is the file
             // itself and was already copied.
-            if !name.is_empty() && name != "::$DATA" {
-                if copy_one_stream(src, dst, &name).is_ok() {
-                    copied += 1;
-                }
+            if !name.is_empty() && name != "::$DATA" && copy_one_stream(src, dst, &name).is_ok() {
+                copied += 1;
             }
             // SAFETY: valid find handle and out-param.
             if unsafe { FindNextStreamW(h, &mut data as *mut _ as *mut c_void) }.is_err() {
@@ -752,7 +763,9 @@ mod imp {
     impl Drop for FindGuard {
         fn drop(&mut self) {
             // SAFETY: handle came from FindFirstStreamW, closed exactly once.
-            unsafe { let _ = FindClose(self.0); }
+            unsafe {
+                let _ = FindClose(self.0);
+            }
         }
     }
 
@@ -849,7 +862,7 @@ mod imp {
         let h = unsafe {
             CreateFileW(
                 PCWSTR(w.as_ptr()),
-                0x0100 /* FILE_WRITE_ATTRIBUTES */,
+                0x0100, /* FILE_WRITE_ATTRIBUTES */
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 None,
                 OPEN_EXISTING,
@@ -1228,7 +1241,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(out.bytes_written, data.len() as u64);
-        assert_eq!(moved, data.len() as u64, "progress must total the file size");
+        assert_eq!(
+            moved,
+            data.len() as u64,
+            "progress must total the file size"
+        );
         assert_eq!(fs::read(&dst).unwrap(), data);
         assert_eq!(hash_file(&src).unwrap(), hash_file(&dst).unwrap());
     }
@@ -1290,14 +1307,7 @@ mod tests {
             buffer_size: 64 * 1024,
             ..Default::default()
         };
-        let r = copy_file(
-            &src,
-            &dst,
-            &entry_for(&src),
-            &opts,
-            &cancel,
-            &mut |_| {},
-        );
+        let r = copy_file(&src, &dst, &entry_for(&src), &opts, &cancel, &mut |_| {});
         assert!(r.is_err());
         assert!(!dst.exists(), "no partial file at the destination name");
         assert!(!part_path(&dst).exists(), "and the temp file is cleaned up");
@@ -1316,7 +1326,15 @@ mod tests {
         e.accessed = Some(e.modified);
         e.created = Some(e.modified);
 
-        copy_file(&src, &dst, &e, &CopyOptions::default(), &Cancel::none(), &mut |_| {}).unwrap();
+        copy_file(
+            &src,
+            &dst,
+            &e,
+            &CopyOptions::default(),
+            &Cancel::none(),
+            &mut |_| {},
+        )
+        .unwrap();
 
         let got = entry_for(&dst);
         #[cfg(windows)]
@@ -1341,8 +1359,15 @@ mod tests {
 
         let src = t.p("new.txt");
         fs::write(&src, b"v2").unwrap();
-        copy_file(&src, &p, &entry_for(&src), &CopyOptions::default(), &Cancel::none(), &mut |_| {})
-            .unwrap();
+        copy_file(
+            &src,
+            &p,
+            &entry_for(&src),
+            &CopyOptions::default(),
+            &Cancel::none(),
+            &mut |_| {},
+        )
+        .unwrap();
         assert_eq!(fs::read(&p).unwrap(), b"v2");
 
         // And it must be deletable afterwards.
@@ -1450,11 +1475,23 @@ mod tests {
         let mut e = entry_for(&src);
         e.attrs = attr::HIDDEN | attr::READONLY;
 
-        copy_file(&src, &dst, &e, &CopyOptions::default(), &Cancel::none(), &mut |_| {}).unwrap();
+        copy_file(
+            &src,
+            &dst,
+            &e,
+            &CopyOptions::default(),
+            &Cancel::none(),
+            &mut |_| {},
+        )
+        .unwrap();
 
         use std::os::windows::fs::MetadataExt;
         let got = fs::metadata(&dst).unwrap().file_attributes();
         assert_ne!(got & attr::HIDDEN, 0, "hidden should have carried over");
-        assert_ne!(got & attr::READONLY, 0, "read-only should have carried over");
+        assert_ne!(
+            got & attr::READONLY,
+            0,
+            "read-only should have carried over"
+        );
     }
 }

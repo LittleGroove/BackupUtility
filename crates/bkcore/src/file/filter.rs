@@ -52,7 +52,13 @@ pub const WINDOWS_SYSTEM_EXCLUDES: &[&str] = &[
 /// Paths a Linux mirror should not descend into: kernel-synthesized filesystems
 /// that are not real data and in some cases are infinite.
 pub const LINUX_SYSTEM_EXCLUDES: &[&str] = &[
-    "proc/", "sys/", "dev/", "run/", "tmp/", "lost+found/", "var/cache/",
+    "proc/",
+    "sys/",
+    "dev/",
+    "run/",
+    "tmp/",
+    "lost+found/",
+    "var/cache/",
 ];
 
 /// Our own bookkeeping directories, which must never be mirrored back into a
@@ -280,7 +286,9 @@ fn seg_match(pat: &[&str], path: &[&str]) -> bool {
         }
         Some(p) => match path.first() {
             None => false,
-            Some(s) => one_seg_match(p.as_bytes(), s.as_bytes()) && seg_match(&pat[1..], &path[1..]),
+            Some(s) => {
+                one_seg_match(p.as_bytes(), s.as_bytes()) && seg_match(&pat[1..], &path[1..])
+            }
         },
     }
 }
@@ -513,7 +521,10 @@ mod tests {
         assert_eq!(f.check(&dir("Photos")), None);
         assert!(f.should_descend(&RelPath::from_key_text("Photos")));
         assert_eq!(f.check(&file("Photos/a.psd")), None);
-        assert_eq!(f.check(&file("Photos/a.jpg")), Some(SkipReason::NotIncluded));
+        assert_eq!(
+            f.check(&file("Photos/a.jpg")),
+            Some(SkipReason::NotIncluded)
+        );
     }
 
     #[test]

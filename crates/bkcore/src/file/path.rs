@@ -320,7 +320,10 @@ mod tests {
             long(Path::new(r"\\nas\share\f")).as_os_str(),
             r"\\?\UNC\nas\share\f"
         );
-        assert_eq!(display(&long(Path::new(r"\\nas\share\f"))), r"\\nas\share\f");
+        assert_eq!(
+            display(&long(Path::new(r"\\nas\share\f"))),
+            r"\\nas\share\f"
+        );
     }
 
     #[cfg(windows)]

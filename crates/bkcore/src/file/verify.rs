@@ -34,7 +34,10 @@ pub enum Difference {
     Extra,
     /// A file on one side, a directory or link on the other.
     KindDiffers,
-    SizeDiffers { source: u64, dest: u64 },
+    SizeDiffers {
+        source: u64,
+        dest: u64,
+    },
     /// Same size, different bytes. Only a deep check finds these.
     ContentDiffers,
     /// Could not be read on one side or the other.
@@ -86,7 +89,11 @@ impl VerifyReport {
             super::plan::human_bytes(self.bytes_checked),
             self.files_matching,
             self.differences_total,
-            if self.deep { "deep: hashed" } else { "shallow: size + time" }
+            if self.deep {
+                "deep: hashed"
+            } else {
+                "shallow: size + time"
+            }
         );
         for (rel, d) in self.differences.iter().take(20) {
             s.push_str(&format!("    {rel} — {d}\n"));
@@ -191,7 +198,13 @@ pub fn compare(
 
     if deep && !to_hash.is_empty() {
         hash_pass(
-            source, dest, &to_hash, workers, cancel, &mut report, progress,
+            source,
+            dest,
+            &to_hash,
+            workers,
+            cancel,
+            &mut report,
+            progress,
         );
     }
     report.cancelled = cancel.is_cancelled();
@@ -278,7 +291,6 @@ fn hash_pass(
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -392,10 +404,7 @@ mod tests {
 
         let r = check(&a.0, &b.0, false);
         assert_eq!(r.differences_total, 1);
-        assert!(matches!(
-            r.differences[0].1,
-            Difference::SizeDiffers { .. }
-        ));
+        assert!(matches!(r.differences[0].1, Difference::SizeDiffers { .. }));
     }
 
     #[test]

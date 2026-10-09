@@ -25,7 +25,7 @@ fn scratch(tag: &str) -> PathBuf {
 /// Build a source image of `n_chunks` full chunks, each filled with a distinct
 /// byte so every chunk hashes differently. Size is a multiple of SECTOR_ALIGN.
 fn write_image(path: &PathBuf, n_chunks: usize) {
-    assert!(CHUNK_SIZE % SECTOR_ALIGN == 0);
+    assert!(CHUNK_SIZE.is_multiple_of(SECTOR_ALIGN));
     let mut data = vec![0u8; n_chunks * CHUNK_SIZE];
     for i in 0..n_chunks {
         let fill = (i as u8).wrapping_add(1);

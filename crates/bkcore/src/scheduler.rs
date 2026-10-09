@@ -54,9 +54,10 @@ pub fn action_for(job: &Job, engine_exe: &Path) -> (String, String) {
 /// Pure and deterministic, so the exact document that will be registered can
 /// be inspected and tested without touching the system.
 pub fn task_xml(job: &Job, engine_exe: &Path, jobs_dir: Option<&Path>) -> Result<String> {
-    let sched = job.schedule.as_ref().ok_or_else(|| {
-        BkError::Other(anyhow::anyhow!("job '{}' has no schedule", job.name))
-    })?;
+    let sched = job
+        .schedule
+        .as_ref()
+        .ok_or_else(|| BkError::Other(anyhow::anyhow!("job '{}' has no schedule", job.name)))?;
 
     let (command, mut args) = action_for(job, engine_exe);
     if let Some(dir) = jobs_dir {
@@ -362,9 +363,10 @@ pub fn systemd_service(job: &Job, engine_exe: &Path, jobs_dir: Option<&Path>) ->
 
 /// The systemd timer unit for a job.
 pub fn systemd_timer(job: &Job) -> Result<String> {
-    let sched = job.schedule.as_ref().ok_or_else(|| {
-        BkError::Other(anyhow::anyhow!("job '{}' has no schedule", job.name))
-    })?;
+    let sched = job
+        .schedule
+        .as_ref()
+        .ok_or_else(|| BkError::Other(anyhow::anyhow!("job '{}' has no schedule", job.name)))?;
     let on_calendar = match sched.frequency {
         Frequency::Hourly => "hourly".to_string(),
         Frequency::Daily => format!("*-*-* {}:00", time_or_default(&sched.at)),
@@ -403,19 +405,29 @@ pub fn systemd_timer(job: &Job) -> Result<String> {
 
 /// The crontab line for a job, for systems without systemd.
 pub fn crontab_line(job: &Job, engine_exe: &Path) -> Result<String> {
-    let sched = job.schedule.as_ref().ok_or_else(|| {
-        BkError::Other(anyhow::anyhow!("job '{}' has no schedule", job.name))
-    })?;
+    let sched = job
+        .schedule
+        .as_ref()
+        .ok_or_else(|| BkError::Other(anyhow::anyhow!("job '{}' has no schedule", job.name)))?;
     let at = time_or_default(&sched.at);
     let (h, m) = at.split_once(':').unwrap_or(("3", "00"));
     let (h, m) = (h.trim_start_matches('0'), m.trim_start_matches('0'));
-    let (h, m) = (if h.is_empty() { "0" } else { h }, if m.is_empty() { "0" } else { m });
+    let (h, m) = (
+        if h.is_empty() { "0" } else { h },
+        if m.is_empty() { "0" } else { m },
+    );
 
     let spec = match sched.frequency {
         Frequency::Hourly => format!("{m} * * * *"),
         Frequency::Daily => format!("{m} {h} * * *"),
         Frequency::Weekly => {
-            let dow = match sched.day.as_deref().unwrap_or("SUN").to_ascii_uppercase().as_str() {
+            let dow = match sched
+                .day
+                .as_deref()
+                .unwrap_or("SUN")
+                .to_ascii_uppercase()
+                .as_str()
+            {
                 s if s.starts_with("SUN") => 0,
                 s if s.starts_with("MON") => 1,
                 s if s.starts_with("TUE") => 2,
@@ -498,7 +510,13 @@ pub fn is_registered(job: &Job) -> bool {
 
 fn sanitize(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -536,7 +554,10 @@ mod tests {
         // Without StartWhenAvailable, a server that was off at 3am silently
         // misses that night's backup entirely.
         let x = xml_of(&scheduled(Frequency::Daily));
-        assert!(x.contains("<StartWhenAvailable>true</StartWhenAvailable>"), "{x}");
+        assert!(
+            x.contains("<StartWhenAvailable>true</StartWhenAvailable>"),
+            "{x}"
+        );
     }
 
     #[test]
@@ -557,7 +578,10 @@ mod tests {
     fn a_long_mirror_is_not_killed_by_the_default_time_limit() {
         // PT0S means "no limit"; the Task Scheduler default is 72 hours.
         let x = xml_of(&scheduled(Frequency::Daily));
-        assert!(x.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"), "{x}");
+        assert!(
+            x.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"),
+            "{x}"
+        );
     }
 
     #[test]
@@ -656,9 +680,15 @@ mod tests {
 
     #[test]
     fn systemd_covers_every_frequency() {
-        assert!(systemd_timer(&scheduled(Frequency::Hourly)).unwrap().contains("OnCalendar=hourly"));
-        assert!(systemd_timer(&scheduled(Frequency::Weekly)).unwrap().contains("Sun *-*-* 03:30"));
-        assert!(systemd_timer(&scheduled(Frequency::OnStart)).unwrap().contains("OnBootSec=2min"));
+        assert!(systemd_timer(&scheduled(Frequency::Hourly))
+            .unwrap()
+            .contains("OnCalendar=hourly"));
+        assert!(systemd_timer(&scheduled(Frequency::Weekly))
+            .unwrap()
+            .contains("Sun *-*-* 03:30"));
+        assert!(systemd_timer(&scheduled(Frequency::OnStart))
+            .unwrap()
+            .contains("OnBootSec=2min"));
     }
 
     #[test]

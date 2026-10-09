@@ -48,10 +48,7 @@ pub fn query_cursor(volume: &str) -> Result<UsnCursor> {
 /// List paths changed on `volume` since `since`. `Ok(None)` signals the journal
 /// can't be trusted (rollover / id mismatch) and the caller must do a full
 /// re-scan instead.
-pub fn changed_since(
-    _volume: &str,
-    _since: UsnCursor,
-) -> Result<Option<Vec<std::path::PathBuf>>> {
+pub fn changed_since(_volume: &str, _since: UsnCursor) -> Result<Option<Vec<std::path::PathBuf>>> {
     // `Ok(None)` is the documented "cannot trust the journal, do a full scan"
     // answer, which is exactly the right response while this is unimplemented:
     // callers already have to handle it, and the fallback is correct.

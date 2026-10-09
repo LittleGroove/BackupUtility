@@ -202,7 +202,9 @@ pub fn scan(
                 EntryKind::Dir => {
                     stats.dirs += 1;
                     let same_volume = root_volume.is_none_or(|rv| {
-                        sys::file_identity(&full).map(|(id, _)| id.volume == rv).unwrap_or(true)
+                        sys::file_identity(&full)
+                            .map(|(id, _)| id.volume == rv)
+                            .unwrap_or(true)
                     });
                     if same_volume && filter.should_descend(&rel) {
                         queue.push_back(rel.clone());
@@ -299,7 +301,10 @@ fn read_platform_meta(e: &mut Entry, _full: &Path, md: &std::fs::Metadata) {
     use std::os::unix::fs::MetadataExt;
     e.mode = md.mode();
     e.modified = FileTime::from_unix_secs_nanos(md.mtime(), md.mtime_nsec() as u32);
-    e.accessed = Some(FileTime::from_unix_secs_nanos(md.atime(), md.atime_nsec() as u32));
+    e.accessed = Some(FileTime::from_unix_secs_nanos(
+        md.atime(),
+        md.atime_nsec() as u32,
+    ));
     if md.is_dir() {
         e.attrs |= attr::DIRECTORY;
     }
@@ -416,7 +421,12 @@ mod tests {
         t.file("x/y/z/deep.txt", b"d");
         let tree = scan_all(&t.0, &Filter::permissive());
 
-        let pos = |s: &str| tree.entries.iter().position(|e| e.rel.as_str() == s).unwrap();
+        let pos = |s: &str| {
+            tree.entries
+                .iter()
+                .position(|e| e.rel.as_str() == s)
+                .unwrap()
+        };
         assert!(pos("x") < pos("x/y"));
         assert!(pos("x/y") < pos("x/y/z"));
         assert!(pos("x/y/z") < pos("x/y/z/deep.txt"));
@@ -433,7 +443,10 @@ mod tests {
             ..Filter::permissive()
         };
         let tree = scan_all(&t.0, &filter);
-        assert!(tree.entries.iter().all(|e| !e.rel.as_str().contains("node_modules")));
+        assert!(tree
+            .entries
+            .iter()
+            .all(|e| !e.rel.as_str().contains("node_modules")));
         assert!(tree.entries.iter().any(|e| e.rel.as_str() == "keep/a.txt"));
         assert!(tree.stats.skipped >= 1);
     }
@@ -497,9 +510,13 @@ mod tests {
             progress_every: 10,
             ..Default::default()
         };
-        scan(&t.0, &Filter::permissive(), &opts, &Cancel::none(), &mut |_| {
-            calls += 1
-        })
+        scan(
+            &t.0,
+            &Filter::permissive(),
+            &opts,
+            &Cancel::none(),
+            &mut |_| calls += 1,
+        )
         .unwrap();
         assert!(calls >= 2, "expected periodic progress, got {calls}");
     }
@@ -517,7 +534,14 @@ mod tests {
             detect_hardlinks: true,
             ..Default::default()
         };
-        let tree = scan(&t.0, &Filter::permissive(), &opts, &Cancel::none(), &mut |_| {}).unwrap();
+        let tree = scan(
+            &t.0,
+            &Filter::permissive(),
+            &opts,
+            &Cancel::none(),
+            &mut |_| {},
+        )
+        .unwrap();
         let ids: Vec<_> = tree.entries.iter().filter_map(|e| e.file_id).collect();
         assert_eq!(ids.len(), 2, "both names should carry an identity");
         assert_eq!(ids[0], ids[1], "and it should be the same identity");

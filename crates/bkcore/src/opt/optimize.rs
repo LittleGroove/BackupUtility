@@ -170,7 +170,9 @@ pub fn run(info: &VolumeInfo, opts: &OptimizeOptions, cancel: &Cancel) -> Result
 /// Build the command line for an operation.
 #[cfg(windows)]
 fn command_for(volume: &str, op: OptimizeOp, opts: &OptimizeOptions) -> (String, Vec<String>) {
-    let target = media::volume_root(volume).trim_end_matches('\\').to_string();
+    let target = media::volume_root(volume)
+        .trim_end_matches('\\')
+        .to_string();
     let mut args = vec![target];
     match op {
         // /D is the traditional file-consolidation defrag.
@@ -227,7 +229,10 @@ fn spawn_and_wait(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let out = child.wait_with_output().map(collect_output).unwrap_or_default();
+                let out = child
+                    .wait_with_output()
+                    .map(collect_output)
+                    .unwrap_or_default();
                 return Ok((status.code(), out));
             }
             Ok(None) => {}
@@ -239,13 +244,19 @@ fn spawn_and_wait(
         // completed NTFS transaction, so the volume is never left inconsistent.
         if cancel.is_cancelled() {
             let _ = child.kill();
-            let out = child.wait_with_output().map(collect_output).unwrap_or_default();
+            let out = child
+                .wait_with_output()
+                .map(collect_output)
+                .unwrap_or_default();
             return Ok((None, format!("{out}\n[cancelled]")));
         }
         if let Some(limit) = opts.timeout {
             if started.elapsed() > limit {
                 let _ = child.kill();
-                let out = child.wait_with_output().map(collect_output).unwrap_or_default();
+                let out = child
+                    .wait_with_output()
+                    .map(collect_output)
+                    .unwrap_or_default();
                 return Ok((None, format!("{out}\n[timed out after {limit:?}]")));
             }
         }
@@ -257,7 +268,7 @@ fn collect_output(o: std::process::Output) -> String {
     let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
     let err = String::from_utf8_lossy(&o.stderr);
     if !err.trim().is_empty() {
-        s.push_str("\n");
+        s.push('\n');
         s.push_str(&err);
     }
     s.trim().to_string()
@@ -309,7 +320,10 @@ mod tests {
             ..Default::default()
         };
         let r = run(&info(MediaKind::Unknown, false), &forced, &Cancel::none()).unwrap();
-        assert!(r.refused.is_none(), "an explicit override should be honoured");
+        assert!(
+            r.refused.is_none(),
+            "an explicit override should be honoured"
+        );
     }
 
     #[test]
@@ -374,7 +388,10 @@ mod tests {
             let (prog, args) = command_for("D:", op, &o);
             assert_eq!(prog, "defrag.exe");
             assert_eq!(args[0], "D:", "the drive comes first");
-            assert!(args.contains(&flag.to_string()), "{op:?} should pass {flag}");
+            assert!(
+                args.contains(&flag.to_string()),
+                "{op:?} should pass {flag}"
+            );
         }
     }
 }

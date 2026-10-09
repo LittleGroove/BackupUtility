@@ -247,16 +247,14 @@ pub fn probe(volume: &str) -> Result<VolumeInfo> {
 
     // The seek-penalty descriptor is the canonical HDD/SSD test — it is what
     // Windows' own Optimize Drives uses.
-    let kind = match query::<DEVICE_SEEK_PENALTY_DESCRIPTOR>(
-        handle.0,
-        StorageDeviceSeekPenaltyProperty,
-    ) {
-        Some(d) if d.IncursSeekPenalty.as_bool() => MediaKind::Hdd,
-        Some(_) => MediaKind::Ssd,
-        // USB enclosures and some RAID controllers do not pass the query
-        // through. We must not guess "HDD" here; see the module docs.
-        None => MediaKind::Unknown,
-    };
+    let kind =
+        match query::<DEVICE_SEEK_PENALTY_DESCRIPTOR>(handle.0, StorageDeviceSeekPenaltyProperty) {
+            Some(d) if d.IncursSeekPenalty.as_bool() => MediaKind::Hdd,
+            Some(_) => MediaKind::Ssd,
+            // USB enclosures and some RAID controllers do not pass the query
+            // through. We must not guess "HDD" here; see the module docs.
+            None => MediaKind::Unknown,
+        };
 
     let trim = query::<DEVICE_TRIM_DESCRIPTOR>(handle.0, StorageDeviceTrimProperty)
         .map(|d| d.TrimEnabled.as_bool())
@@ -316,10 +314,7 @@ pub fn probe(volume: &str) -> Result<VolumeInfo> {
     .is_ok();
 
     let (total_clusters, free_clusters) = match (bytes_per_cluster, have_sizes) {
-        (Some(c), true) => (
-            Some(total_bytes / c as u64),
-            Some(free_bytes / c as u64),
-        ),
+        (Some(c), true) => (Some(total_bytes / c as u64), Some(free_bytes / c as u64)),
         _ => (None, None),
     };
 
@@ -396,7 +391,10 @@ mod tests {
     fn an_ssd_is_never_defragmented() {
         // The mistake this exists to prevent: a full defrag pass on solid
         // state rewrites the drive for no benefit and costs write endurance.
-        assert_eq!(recommended_op(&info(MediaKind::Ssd, true)), OptimizeOp::Retrim);
+        assert_eq!(
+            recommended_op(&info(MediaKind::Ssd, true)),
+            OptimizeOp::Retrim
+        );
         assert_eq!(
             recommended_op(&info(MediaKind::Ssd, false)),
             OptimizeOp::AnalyzeOnly
@@ -406,7 +404,10 @@ mod tests {
 
     #[test]
     fn a_spinning_disk_is_defragmented() {
-        assert_eq!(recommended_op(&info(MediaKind::Hdd, false)), OptimizeOp::Defrag);
+        assert_eq!(
+            recommended_op(&info(MediaKind::Hdd, false)),
+            OptimizeOp::Defrag
+        );
         assert!(MediaKind::Hdd.benefits_from_defrag());
     }
 
@@ -414,7 +415,10 @@ mod tests {
     fn unidentified_media_defers_rather_than_guessing_hdd() {
         // A USB enclosure often will not answer the seek-penalty query.
         // Assuming "spinning" there would defrag an SSD in a caddy.
-        assert_eq!(recommended_op(&info(MediaKind::Unknown, true)), OptimizeOp::Auto);
+        assert_eq!(
+            recommended_op(&info(MediaKind::Unknown, true)),
+            OptimizeOp::Auto
+        );
         assert!(!MediaKind::Unknown.benefits_from_defrag());
     }
 

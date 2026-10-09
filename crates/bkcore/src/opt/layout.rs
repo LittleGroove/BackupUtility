@@ -208,7 +208,10 @@ pub fn run(
         report.refused = Some(format!(
             "the destination is {} — only NTFS exposes the cluster-placement \
              interface this needs",
-            dest_volume.filesystem.as_deref().unwrap_or("an unknown filesystem")
+            dest_volume
+                .filesystem
+                .as_deref()
+                .unwrap_or("an unknown filesystem")
         ));
         return Ok(report);
     }
@@ -321,7 +324,10 @@ mod imp {
             if cancel.is_cancelled() {
                 break;
             }
-            if opts.max_files.is_some_and(|m| report.files_compared as usize >= m) {
+            if opts
+                .max_files
+                .is_some_and(|m| report.files_compared as usize >= m)
+            {
                 break;
             }
 
@@ -384,16 +390,16 @@ mod imp {
 
         // ---- Now the destructive half ------------------------------------
         let volume = extents::open_volume(&dest_volume.volume, true)?;
-        let mut free = extents::free_map(
-            &dest_volume.volume,
-            dest_volume.total_clusters.unwrap_or(0),
-        )?;
+        let mut free =
+            extents::free_map(&dest_volume.volume, dest_volume.total_clusters.unwrap_or(0))?;
         // Take the volume size from the bitmap we just read, not from the
         // reported geometry: the bitmap is authoritative and always present,
         // whereas `total_clusters` is `None` whenever the geometry query was
         // refused. Trusting the latter left the evacuation allocator with a
         // zero-sized volume and no free space it was willing to hand out.
-        let total_clusters = free.cluster_count().max(dest_volume.total_clusters.unwrap_or(0));
+        let total_clusters = free
+            .cluster_count()
+            .max(dest_volume.total_clusters.unwrap_or(0));
 
         // Who is sitting where. Needed because a file's target position is
         // almost always occupied by something else — on a real volume nothing
@@ -593,7 +599,15 @@ mod imp {
                 free.release(dest, span);
                 return false;
             };
-            if !move_run(volume, handle.0, occ.vcn, dest, span, &Cancel::none(), report) {
+            if !move_run(
+                volume,
+                handle.0,
+                occ.vcn,
+                dest,
+                span,
+                &Cancel::none(),
+                report,
+            ) {
                 free.release(dest, span);
                 return false;
             }
@@ -701,11 +715,10 @@ mod imp {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::extents::Extent;
+    use super::*;
 
     fn layout(runs: &[(i64, i64, u64)]) -> FileLayout {
         FileLayout {

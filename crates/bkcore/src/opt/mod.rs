@@ -103,7 +103,10 @@ impl OptimizeReport {
             s.push_str("destination fragmentation:\n");
             s.push_str(&f.describe());
         }
-        for r in [&self.source_optimize, &self.dest_optimize].into_iter().flatten() {
+        for r in [&self.source_optimize, &self.dest_optimize]
+            .into_iter()
+            .flatten()
+        {
             s.push_str(&r.summary());
         }
         if let Some(l) = &self.layout {

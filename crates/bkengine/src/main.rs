@@ -18,6 +18,7 @@
 use bkcore::apply;
 use bkcore::backup::{self, BackupParams};
 use bkcore::diskio::FileTarget;
+use bkcore::file::attic::AtticPolicy;
 use bkcore::file::filter::Filter;
 use bkcore::file::mirror::{self, Event, MirrorJob, MirrorReport};
 use bkcore::file::path::RelPath;
@@ -25,7 +26,6 @@ use bkcore::file::plan::{human_bytes, CompareBy, MirrorMode};
 use bkcore::file::state::{self as filestate, SaveState};
 use bkcore::file::verify;
 use bkcore::file::Cancel;
-use bkcore::file::attic::AtticPolicy;
 use bkcore::job::{Fidelity, Frequency, Job, JobKind, JobStore, Schedule};
 use bkcore::manifest::Manifest;
 use bkcore::opt::{self, media, optimize, OptimizeSettings};
@@ -411,8 +411,7 @@ enum ScheduleCmd {
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "warn".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
         )
         .init();
 
@@ -454,7 +453,16 @@ fn main() -> anyhow::Result<()> {
             deep,
             store,
             workers,
-        } => cmd_verify(&cli.jobs_dir, job, source, dest, deep, store, workers, &cancel),
+        } => cmd_verify(
+            &cli.jobs_dir,
+            job,
+            source,
+            dest,
+            deep,
+            store,
+            workers,
+            &cancel,
+        ),
         Cmd::Logs {
             job,
             show,
@@ -492,7 +500,9 @@ fn install_signal_handler() -> Cancel {
             eprintln!("\nforced exit");
             std::process::exit(130);
         }
-        eprintln!("\nstopping — finishing the current file and saving progress (Ctrl+C again to force)");
+        eprintln!(
+            "\nstopping — finishing the current file and saving progress (Ctrl+C again to force)"
+        );
         handler.cancel();
     });
     cancel
@@ -634,11 +644,7 @@ fn run_mirror(job: &MirrorJob, cancel: &Cancel, quiet: bool) -> anyhow::Result<M
                 last_line_len = 0;
             }
             if !quiet {
-                println!(
-                    "plan for '{}': {} actions",
-                    job.name,
-                    plan.len()
-                );
+                println!("plan for '{}': {} actions", job.name, plan.len());
                 print!("{}", bkcore::file::plan::summarize(plan, job.mode));
                 for c in plan.conflicts.iter().take(10) {
                     println!("  conflict: {} — {}", c.rel, c.reason);
@@ -654,7 +660,7 @@ fn run_mirror(job: &MirrorJob, cancel: &Cancel, quiet: bool) -> anyhow::Result<M
             if interactive {
                 let eta = p
                     .eta_secs()
-                    .map(|s| timefmt::duration(s))
+                    .map(timefmt::duration)
                     .unwrap_or_else(|| "--".into());
                 last_line_len = redraw(
                     &format!(
@@ -840,7 +846,10 @@ fn cmd_status(
                 Ok(logs) if !logs.is_empty() => {
                     println!("  log        {}", logs[0].display());
                     if logs.len() > 1 {
-                        println!("             ({} older, see `bkengine logs`)", logs.len() - 1);
+                        println!(
+                            "             ({} older, see `bkengine logs`)",
+                            logs.len() - 1
+                        );
                     }
                 }
                 _ => {}
@@ -876,7 +885,9 @@ fn cmd_jobs(jobs_dir: &Option<PathBuf>, cmd: JobsCmd) -> anyhow::Result<()> {
                         bkcore::file::path::display(&m.source),
                         bkcore::file::path::display(&m.dest)
                     ),
-                    JobKind::Image(i) => format!("image {} -> {}", i.source, i.store_root.display()),
+                    JobKind::Image(i) => {
+                        format!("image {} -> {}", i.source, i.store_root.display())
+                    }
                 };
                 let sched = j
                     .schedule
@@ -964,7 +975,10 @@ fn set_disabled(store: &JobStore, name: &str, disabled: bool) -> anyhow::Result<
         let exe = std::env::current_exe()?;
         let _ = bkcore::scheduler::register(&job, &exe, Some(store.dir()));
     }
-    println!("job '{name}' is now {}", if disabled { "disabled" } else { "enabled" });
+    println!(
+        "job '{name}' is now {}",
+        if disabled { "disabled" } else { "enabled" }
+    );
     Ok(())
 }
 
@@ -1003,11 +1017,17 @@ fn cmd_schedule(jobs_dir: &Option<PathBuf>, cmd: ScheduleCmd) -> anyhow::Result<
         ScheduleCmd::Preview { job } => {
             let j = store.load(&job)?;
             #[cfg(windows)]
-            print!("{}", bkcore::scheduler::task_xml(&j, &exe, Some(store.dir()))?);
+            print!(
+                "{}",
+                bkcore::scheduler::task_xml(&j, &exe, Some(store.dir()))?
+            );
             #[cfg(not(windows))]
             {
                 println!("--- bku-{}.service ---", j.name);
-                print!("{}", bkcore::scheduler::systemd_service(&j, &exe, Some(store.dir())));
+                print!(
+                    "{}",
+                    bkcore::scheduler::systemd_service(&j, &exe, Some(store.dir()))
+                );
                 println!("--- bku-{}.timer ---", j.name);
                 print!("{}", bkcore::scheduler::systemd_timer(&j)?);
             }
@@ -1038,8 +1058,12 @@ fn cmd_drives() -> anyhow::Result<()> {
                     letter,
                     info.kind.to_string(),
                     info.filesystem.as_deref().unwrap_or("?"),
-                    info.free_bytes().map(human_bytes).unwrap_or_else(|| "?".into()),
-                    info.total_bytes().map(human_bytes).unwrap_or_else(|| "?".into()),
+                    info.free_bytes()
+                        .map(human_bytes)
+                        .unwrap_or_else(|| "?".into()),
+                    info.total_bytes()
+                        .map(human_bytes)
+                        .unwrap_or_else(|| "?".into()),
                     media::recommended_op(&info)
                 ),
                 Err(e) => println!("  {letter}:    (unreadable: {e})"),
@@ -1088,11 +1112,18 @@ fn cmd_layout(
     let opts = opt::layout::LayoutOptions {
         dry_run: !apply_moves,
         max_files,
-        min_clusters: min_clusters
-            .unwrap_or(opt::layout::LayoutOptions::default().min_clusters),
+        min_clusters: min_clusters.unwrap_or(opt::layout::LayoutOptions::default().min_clusters),
         ..Default::default()
     };
-    let report = opt::layout::run(source, dest, &dest_volume, &files, &opts, cancel, &mut |_| {})?;
+    let report = opt::layout::run(
+        source,
+        dest,
+        &dest_volume,
+        &files,
+        &opts,
+        cancel,
+        &mut |_| {},
+    )?;
     print!("{}", report.describe());
     if !apply_moves && report.refused.is_none() {
         println!("  (re-run with --apply to move clusters)");
@@ -1306,7 +1337,11 @@ fn compare_trees(
         "comparing {} against {} ({})",
         bkcore::file::path::display(source),
         bkcore::file::path::display(dest),
-        if deep { "hashing every file" } else { "size and time" }
+        if deep {
+            "hashing every file"
+        } else {
+            "size and time"
+        }
     );
     let report = verify::compare(
         source,
@@ -1364,11 +1399,7 @@ fn cmd_logs(
     Ok(())
 }
 
-fn pick_manifest(
-    store: &ChunkStore,
-    job: &str,
-    from: Option<String>,
-) -> anyhow::Result<Manifest> {
+fn pick_manifest(store: &ChunkStore, job: &str, from: Option<String>) -> anyhow::Result<Manifest> {
     match from {
         Some(stem) => Ok(store.load_manifest(&stem)?),
         None => store
@@ -1459,4 +1490,3 @@ fn cmd_clone(
         anyhow::bail!("device cloning is only implemented on Windows so far");
     }
 }
-

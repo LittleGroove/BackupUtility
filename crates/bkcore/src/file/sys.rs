@@ -23,10 +23,10 @@ mod imp {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{CloseHandle, HANDLE, MAX_PATH};
     use windows::Win32::Storage::FileSystem::{
-        CreateFileW, FindClose, FindFirstFileW, GetFileInformationByHandle,
-        GetVolumeInformationW, GetVolumePathNameW, BY_HANDLE_FILE_INFORMATION,
-        FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, WIN32_FIND_DATAW,
+        CreateFileW, FindClose, FindFirstFileW, GetFileInformationByHandle, GetVolumeInformationW,
+        GetVolumePathNameW, BY_HANDLE_FILE_INFORMATION, FILE_FLAGS_AND_ATTRIBUTES,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, WIN32_FIND_DATAW,
     };
 
     /// A `HANDLE` that closes itself. Every early return in this module would
@@ -38,13 +38,19 @@ mod imp {
         fn drop(&mut self) {
             if !self.0.is_invalid() {
                 // SAFETY: the handle came from CreateFileW and is closed once.
-                unsafe { let _ = CloseHandle(self.0); }
+                unsafe {
+                    let _ = CloseHandle(self.0);
+                }
             }
         }
     }
 
     pub fn wide(p: &Path) -> Vec<u16> {
-        long(p).as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+        long(p)
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
     }
 
     /// Open a handle purely to interrogate metadata.
@@ -86,7 +92,9 @@ mod imp {
             _ => return 0,
         };
         // SAFETY: handle came from FindFirstFileW and is closed exactly once.
-        unsafe { let _ = FindClose(h); }
+        unsafe {
+            let _ = FindClose(h);
+        }
         // dwReserved0 holds the reparse tag, but ONLY when the attribute bit
         // is set; otherwise it is undefined garbage.
         if data.dwFileAttributes & super::super::meta::attr::REPARSE_POINT != 0 {
@@ -137,7 +145,10 @@ mod imp {
             )
         }
         .ok()?;
-        let end = fs_name.iter().position(|&c| c == 0).unwrap_or(fs_name.len());
+        let end = fs_name
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(fs_name.len());
         Some(String::from_utf16_lossy(&fs_name[..end]))
     }
 
@@ -368,14 +379,22 @@ mod tests {
         // The preflight check depends on this, and a check that silently
         // answers None never fires.
         let free = free_space(&std::env::temp_dir());
-        assert!(free.is_some(), "expected a free-space figure for the temp volume");
-        assert!(free.unwrap() > 0, "a writable volume should have some space");
+        assert!(
+            free.is_some(),
+            "expected a free-space figure for the temp volume"
+        );
+        assert!(
+            free.unwrap() > 0,
+            "a writable volume should have some space"
+        );
     }
 
     #[test]
     fn free_space_on_a_nonexistent_path_is_none_not_zero() {
         // Zero would read as "the disk is full" and block every job.
-        let missing = std::env::temp_dir().join("bku_no_such_volume_xyz").join("deeper");
+        let missing = std::env::temp_dir()
+            .join("bku_no_such_volume_xyz")
+            .join("deeper");
         let _ = std::fs::remove_dir_all(&missing);
         assert_eq!(free_space(&missing), None);
     }

@@ -39,7 +39,10 @@ impl ChunkStore {
     fn chunk_path(&self, hash: &ChunkHash) -> PathBuf {
         let h = hex(hash);
         // Fan out by first byte so no single dir holds a million files.
-        self.root.join("chunks").join(&h[0..2]).join(format!("{h}.zst"))
+        self.root
+            .join("chunks")
+            .join(&h[0..2])
+            .join(format!("{h}.zst"))
     }
 
     /// True if this chunk is already stored (the fast path for unchanged data).
@@ -74,9 +77,8 @@ impl ChunkStore {
     /// corruption, not a soft miss.
     pub fn get(&self, hash: &ChunkHash) -> Result<Vec<u8>> {
         let path = self.chunk_path(hash);
-        let f = fs::File::open(&path).map_err(|_| {
-            BkError::StoreCorrupt(format!("chunk {} missing", hex(hash)))
-        })?;
+        let f = fs::File::open(&path)
+            .map_err(|_| BkError::StoreCorrupt(format!("chunk {} missing", hex(hash))))?;
         let mut out = Vec::new();
         zstd::Decoder::new(f)?.read_to_end(&mut out)?;
         Ok(out)
@@ -85,7 +87,10 @@ impl ChunkStore {
     /// Atomically commit a completed manifest. Call only after every chunk it
     /// references is durably `put`. `file_stem` should be unique per backup.
     pub fn commit_manifest(&self, file_stem: &str, m: &Manifest) -> Result<PathBuf> {
-        let dst = self.root.join("manifests").join(format!("{file_stem}.json"));
+        let dst = self
+            .root
+            .join("manifests")
+            .join(format!("{file_stem}.json"));
         let tmp = self.root.join("tmp").join(format!("{file_stem}.json.part"));
         let json = serde_json::to_vec_pretty(m).map_err(|e| BkError::Other(e.into()))?;
         {

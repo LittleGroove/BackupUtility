@@ -186,7 +186,10 @@ fn only_the_changed_file_is_transferred() {
     let j = job("chg", &src.root, &dst.root, &st.root);
     run(&j);
 
-    src.write("docs/notes.md", b"# notes\nrewritten, and longer than before\n");
+    src.write(
+        "docs/notes.md",
+        b"# notes\nrewritten, and longer than before\n",
+    );
     let second = run(&j);
 
     assert_eq!(second.plan_stats.files_to_update, 1);
@@ -392,7 +395,10 @@ fn a_resumed_run_skips_the_actions_the_first_attempt_completed() {
     let resumed = run(&j);
 
     assert!(resumed.resumed);
-    assert_eq!(resumed.bytes_copied, 0, "every action was already journalled");
+    assert_eq!(
+        resumed.bytes_copied, 0,
+        "every action was already journalled"
+    );
     assert!(
         !dst.path("readme.txt").exists(),
         "a resumed run must not redo work the journal says is finished"
@@ -436,7 +442,10 @@ fn content_comparison_catches_a_same_size_same_time_edit() {
     run(&j);
 
     // Same length, and we restore the original timestamp.
-    let before = fs::metadata(src.path("ledger.dat")).unwrap().modified().unwrap();
+    let before = fs::metadata(src.path("ledger.dat"))
+        .unwrap()
+        .modified()
+        .unwrap();
     src.write("ledger.dat", b"BBBBBBBBBB");
     set_mtime(&src.path("ledger.dat"), before);
 
@@ -474,7 +483,10 @@ fn excluded_paths_are_neither_copied_nor_deleted_from_the_destination() {
 
     run(&j);
 
-    assert!(!dst.path("cache/huge.tmp").exists(), "excluded, so not copied");
+    assert!(
+        !dst.path("cache/huge.tmp").exists(),
+        "excluded, so not copied"
+    );
     assert!(
         dst.path("cache/local.tmp").exists(),
         "excluded, so not deleted either"
@@ -514,9 +526,18 @@ fn timestamps_survive_the_mirror() {
 
     run(&job("ts", &src.root, &dst.root, &st.root));
 
-    let got = fs::metadata(dst.path("aged.txt")).unwrap().modified().unwrap();
-    let want = fs::metadata(src.path("aged.txt")).unwrap().modified().unwrap();
-    assert_eq!(got, want, "the mirrored file should carry the source's mtime");
+    let got = fs::metadata(dst.path("aged.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let want = fs::metadata(src.path("aged.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(
+        got, want,
+        "the mirrored file should carry the source's mtime"
+    );
 }
 
 #[test]
@@ -574,7 +595,10 @@ fn a_file_that_becomes_a_directory_is_replaced_correctly() {
 
     let second = run(&j);
     assert!(second.succeeded(), "{}", second.summary());
-    assert!(dst.path("thing").is_dir(), "the file should have been replaced");
+    assert!(
+        dst.path("thing").is_dir(),
+        "the file should have been replaced"
+    );
     assert_eq!(
         fs::read(dst.path("thing/inner.txt")).unwrap(),
         b"i am a directory now"
@@ -596,7 +620,7 @@ fn progress_events_reach_the_caller() {
             mirror::Event::ScanningSource(_) => scanned = true,
             mirror::Event::Planned(p) => {
                 planned = true;
-                assert!(p.len() > 0);
+                assert!(!p.is_empty());
             }
             mirror::Event::Progress(p) => {
                 progressed = true;
@@ -607,11 +631,17 @@ fn progress_events_reach_the_caller() {
     )
     .unwrap();
 
-    assert!(scanned && planned && progressed, "a front-end needs all three");
+    assert!(
+        scanned && planned && progressed,
+        "a front-end needs all three"
+    );
 }
 
 #[cfg(windows)]
 #[test]
+// This test is about the Windows read-only attribute; on Unix clearing it
+// is also what we want here (a scratch file in a temp dir).
+#[allow(clippy::permissions_set_readonly_false)]
 fn readonly_and_hidden_files_mirror_and_re_mirror() {
     // Read-only files are the classic thing that breaks a mirror on the
     // *second* run, when it tries to overwrite what it faithfully copied.
@@ -626,7 +656,10 @@ fn readonly_and_hidden_files_mirror_and_re_mirror() {
     let j = job("ro", &src.root, &dst.root, &st.root);
     run(&j);
     assert!(
-        fs::metadata(dst.path("locked.txt")).unwrap().permissions().readonly(),
+        fs::metadata(dst.path("locked.txt"))
+            .unwrap()
+            .permissions()
+            .readonly(),
         "the read-only attribute should have been mirrored"
     );
 
@@ -643,7 +676,6 @@ fn readonly_and_hidden_files_mirror_and_re_mirror() {
     assert!(second.succeeded(), "{}", second.summary());
     assert_eq!(fs::read(dst.path("locked.txt")).unwrap(), b"v2 is longer");
 }
-
 
 // ===========================================================================
 // Run logs, attic retention, free space, and verification
@@ -664,8 +696,14 @@ fn every_run_leaves_a_log_describing_what_it_did() {
     assert!(log_path.exists(), "{}", log_path.display());
     let text = fs::read_to_string(&log_path).unwrap();
 
-    assert!(text.contains("logjob"), "the log should name the job:\n{text}");
-    assert!(text.contains("files to copy"), "and record the plan:\n{text}");
+    assert!(
+        text.contains("logjob"),
+        "the log should name the job:\n{text}"
+    );
+    assert!(
+        text.contains("files to copy"),
+        "and record the plan:\n{text}"
+    );
     assert!(text.contains("status"), "and the outcome:\n{text}");
     assert!(text.contains("finished"), "and when it ended:\n{text}");
 }
@@ -798,7 +836,11 @@ fn verification_confirms_a_good_mirror_and_catches_a_corrupted_one() {
     };
 
     let clean = check(true);
-    assert!(clean.matched(), "a fresh mirror should verify:\n{}", clean.describe());
+    assert!(
+        clean.matched(),
+        "a fresh mirror should verify:\n{}",
+        clean.describe()
+    );
     assert!(clean.bytes_checked >= 5 * 1024 * 1024);
 
     // Corrupt one byte of the destination, keeping size and mtime identical —
@@ -823,7 +865,11 @@ fn a_run_that_would_not_fit_is_refused_before_it_starts() {
     // The check is arithmetic over the plan and the volume's free space, so
     // this exercises the decision rather than needing an actually-full disk.
     assert_eq!(mirror::shortfall(1000, 400, 0), Some(600));
-    assert_eq!(mirror::shortfall(1000, 400, 600), None, "removals free space");
+    assert_eq!(
+        mirror::shortfall(1000, 400, 600),
+        None,
+        "removals free space"
+    );
 
     // And a real run on a volume with room must not be blocked by it.
     let src = Sandbox::new("space_src");

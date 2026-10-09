@@ -55,7 +55,10 @@ impl AlignedBuf {
     /// Allocate `len` zeroed, sector-aligned bytes. `len` must be a multiple of
     /// `SECTOR_ALIGN`.
     pub fn new(len: usize) -> Self {
-        assert!(len % SECTOR_ALIGN == 0, "buffer length must be sector-aligned");
+        assert!(
+            len.is_multiple_of(SECTOR_ALIGN),
+            "buffer length must be sector-aligned"
+        );
         let layout = Layout::from_size_align(len, SECTOR_ALIGN).expect("valid layout");
         // SAFETY: layout has non-zero size (callers pass a positive multiple).
         let ptr = unsafe { alloc_zeroed(layout) };
@@ -128,7 +131,11 @@ impl SectorReader {
         .map_err(|e| win_err("CreateFileW", e))?;
 
         let len = query_length(handle)?;
-        Ok(Self { handle, len, pos: 0 })
+        Ok(Self {
+            handle,
+            len,
+            pos: 0,
+        })
     }
 
     /// Total size of the device/file in bytes.
@@ -145,7 +152,7 @@ impl SectorReader {
     /// keeps chunk offsets aligned across windows. `buf.len()` must be a
     /// multiple of `SECTOR_ALIGN`.
     pub fn read_window(&mut self, buf: &mut [u8]) -> Result<usize> {
-        debug_assert!(buf.len() % SECTOR_ALIGN == 0);
+        debug_assert!(buf.len().is_multiple_of(SECTOR_ALIGN));
         // Never request past the end of the device. Unlike a file (which
         // short-reads at EOF), a raw device returns ERROR_SECTOR_NOT_FOUND if
         // asked for sectors beyond its size. Clamp to the sector-aligned
@@ -369,7 +376,7 @@ impl BlockTarget for DeviceTarget {
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize> {
-        debug_assert!(buf.len() % SECTOR_ALIGN == 0 && buf.len() <= self.scratch.len());
+        debug_assert!(buf.len().is_multiple_of(SECTOR_ALIGN) && buf.len() <= self.scratch.len());
         self.seek(offset)?;
         let mut got: u32 = 0;
         let slice = &mut self.scratch.as_mut_slice()[..buf.len()];
@@ -382,7 +389,7 @@ impl BlockTarget for DeviceTarget {
     }
 
     fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
-        debug_assert!(data.len() % SECTOR_ALIGN == 0 && data.len() <= self.scratch.len());
+        debug_assert!(data.len().is_multiple_of(SECTOR_ALIGN) && data.len() <= self.scratch.len());
         // Copy into the aligned scratch buffer that NO_BUFFERING requires.
         self.scratch.as_mut_slice()[..data.len()].copy_from_slice(data);
         self.seek(offset)?;
