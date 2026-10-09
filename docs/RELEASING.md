@@ -74,6 +74,14 @@ machine.
    bkengine update --check
    ```
 
+   Or run the end-to-end scripts, which build a 0.0.9 engine in a scratch
+   folder and let it update itself from the release you just published:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\updater_e2e.ps1
+   wsl -d Ubuntu-22.04 -u root -- bash -lc "cd /mnt/s/SERVICES/BackupUtility && CARGO_TARGET_DIR=/root/bku-target bash scripts/updater_e2e.sh"
+   ```
+
 ## What a release contains
 
 | Asset | Who uses it |
