@@ -29,8 +29,10 @@ use bkcore::file::Cancel;
 use bkcore::job::{Fidelity, Frequency, Job, JobKind, JobStore, Schedule};
 use bkcore::manifest::Manifest;
 use bkcore::opt::{self, media, optimize, OptimizeSettings};
+use bkcore::settings::Settings;
 use bkcore::store::ChunkStore;
 use bkcore::timefmt;
+use bkcore::update::{self, UpdateEvent};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -84,6 +86,23 @@ enum Cmd {
     Schedule(ScheduleCmd),
     /// List local volumes and what kind of media they are.
     Drives,
+    /// Show the version, the platform, and where this tool keeps its files.
+    Version,
+    /// Check the GitHub releases page for a newer version, and install it.
+    Update {
+        /// Only report whether an update exists; install nothing.
+        #[arg(long)]
+        check: bool,
+        /// Consider pre-releases too, for this run only.
+        #[arg(long)]
+        beta: bool,
+        /// Install without asking. Required when there is no terminal.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+    /// Show or change application settings (update checks, beta channel, theme).
+    #[command(subcommand)]
+    Settings(SettingsCmd),
     /// Defragment or retrim a volume, choosing the operation from the media.
     Optimize {
         /// Volume to optimize, e.g. `D:`.
@@ -203,6 +222,14 @@ enum Cmd {
         #[arg(long)]
         confirm: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum SettingsCmd {
+    /// Print every setting and where the settings file lives.
+    Show,
+    /// Change one setting, e.g. `settings set beta_updates true`.
+    Set { key: String, value: String },
 }
 
 #[derive(Args)]
@@ -418,6 +445,12 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let cancel = install_signal_handler();
 
+    // Sweep what an earlier self-update parked beside the binaries. Cheap: one
+    // directory listing. Best effort: a file still held open is left for later.
+    if let Ok(dir) = bkcore::paths::install_dir() {
+        let _ = update::cleanup_old_binaries(&dir);
+    }
+
     match cli.cmd {
         Cmd::Mirror(args) => cmd_mirror(&args, &cancel, cli.quiet),
         Cmd::Run { job, dry_run } => cmd_run(&cli.jobs_dir, &job, dry_run, &cancel, cli.quiet),
@@ -425,6 +458,9 @@ fn main() -> anyhow::Result<()> {
         Cmd::Jobs(c) => cmd_jobs(&cli.jobs_dir, c),
         Cmd::Schedule(c) => cmd_schedule(&cli.jobs_dir, c),
         Cmd::Drives => cmd_drives(),
+        Cmd::Version => cmd_version(),
+        Cmd::Update { check, beta, yes } => cmd_update(check, beta, yes),
+        Cmd::Settings(c) => cmd_settings(c),
         Cmd::Optimize {
             volume,
             dry_run,
@@ -1026,7 +1062,12 @@ fn cmd_schedule(jobs_dir: &Option<PathBuf>, cmd: ScheduleCmd) -> anyhow::Result<
                 println!("--- bku-{}.service ---", j.name);
                 print!(
                     "{}",
-                    bkcore::scheduler::systemd_service(&j, &exe, Some(store.dir()))
+                    bkcore::scheduler::systemd_service(
+                        &j,
+                        &exe,
+                        Some(store.dir()),
+                        bkcore::scheduler::unit_location().1
+                    )
                 );
                 println!("--- bku-{}.timer ---", j.name);
                 print!("{}", bkcore::scheduler::systemd_timer(&j)?);
@@ -1041,37 +1082,179 @@ fn cmd_schedule(jobs_dir: &Option<PathBuf>, cmd: ScheduleCmd) -> anyhow::Result<
 // ---------------------------------------------------------------------------
 
 fn cmd_drives() -> anyhow::Result<()> {
-    #[cfg(windows)]
-    {
+    let volumes = media::list_volumes();
+    if volumes.is_empty() {
+        println!("no volumes found");
+        return Ok(());
+    }
+    let width = volumes
+        .iter()
+        .map(|v| v.volume.chars().count())
+        .max()
+        .unwrap_or(6)
+        .max(6);
+    println!(
+        "{:<width$}  media    filesystem  {:>10}  {:>10}  recommended",
+        "volume", "free", "size"
+    );
+    for info in &volumes {
         println!(
-            "volume  media    filesystem  {:>10}  {:>10}  recommended",
-            "free", "size"
+            "{:<width$}  {:<8} {:<11} {:>10}  {:>10}  {}",
+            info.volume,
+            info.kind.to_string(),
+            info.filesystem.as_deref().unwrap_or("?"),
+            info.free_bytes()
+                .map(human_bytes)
+                .unwrap_or_else(|| "?".into()),
+            info.total_bytes()
+                .map(human_bytes)
+                .unwrap_or_else(|| "?".into()),
+            media::recommended_op(info)
         );
-        for letter in 'A'..='Z' {
-            let root = format!("{letter}:\\");
-            if !Path::new(&root).exists() {
-                continue;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Version, updates, settings
+// ---------------------------------------------------------------------------
+
+fn cmd_version() -> anyhow::Result<()> {
+    println!("bkengine {} ({})", bkcore::VERSION, update::platform_tag());
+    println!(
+        "  executable  {}",
+        std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    );
+    println!("  config      {}", bkcore::paths::config_root().display());
+    println!(
+        "  jobs        {}",
+        bkcore::job::default_jobs_dir().display()
+    );
+    println!("  state       {}", bkcore::paths::state_root().display());
+    println!("  settings    {}", Settings::path().display());
+    println!(
+        "  privileges  {}",
+        if bkcore::file::sys::is_elevated() {
+            if cfg!(windows) {
+                "elevated (Administrator)"
+            } else {
+                "root"
             }
-            match media::probe(&letter.to_string()) {
-                Ok(info) => println!(
-                    "  {}:    {:<8} {:<11} {:>10}  {:>10}  {}",
-                    letter,
-                    info.kind.to_string(),
-                    info.filesystem.as_deref().unwrap_or("?"),
-                    info.free_bytes()
-                        .map(human_bytes)
-                        .unwrap_or_else(|| "?".into()),
-                    info.total_bytes()
-                        .map(human_bytes)
-                        .unwrap_or_else(|| "?".into()),
-                    media::recommended_op(&info)
-                ),
-                Err(e) => println!("  {letter}:    (unreadable: {e})"),
-            }
+        } else if cfg!(windows) {
+            "not elevated"
+        } else {
+            "user"
+        }
+    );
+    println!("  releases    {}", update::RELEASES_URL);
+    Ok(())
+}
+
+fn cmd_update(check_only: bool, beta: bool, yes: bool) -> anyhow::Result<()> {
+    let mut settings = Settings::load();
+    let beta = beta || settings.beta_updates;
+    let updater = update::Updater::github();
+    println!(
+        "checking {} for a newer release{}...",
+        update::RELEASES_URL,
+        if beta { " (betas included)" } else { "" }
+    );
+    let found = updater.check(beta)?;
+    settings.last_update_check_unix = Some(timefmt::now_unix());
+    let _ = settings.save();
+
+    let Some(release) = found else {
+        println!("you have the newest version ({})", bkcore::VERSION);
+        return Ok(());
+    };
+    println!(
+        "version {} is available (you have {}){}",
+        release.version,
+        bkcore::VERSION,
+        if release.prerelease {
+            "  [pre-release]"
+        } else {
+            ""
+        }
+    );
+    if !release.notes.trim().is_empty() {
+        println!();
+        for line in release.notes.lines() {
+            println!("    {line}");
+        }
+        println!();
+    }
+    if check_only {
+        println!("install it with: bkengine update");
+        return Ok(());
+    }
+    if !yes {
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!("no terminal to ask on; pass --yes to install without a prompt");
+        }
+        print!("install it now? [y/N] ");
+        std::io::stdout().flush()?;
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            println!("not installed");
+            return Ok(());
         }
     }
-    #[cfg(not(windows))]
-    println!("drive enumeration is not implemented on this platform yet");
+
+    let mut last_line_len = 0usize;
+    let applied = update::apply(&updater, &release, &mut |event| match event {
+        UpdateEvent::Downloading { name, done, total } => {
+            let text = match total {
+                Some(t) if t > 0 => format!(
+                    "  downloading {name}: {} of {} ({:.0}%)",
+                    human_bytes(done),
+                    human_bytes(t),
+                    done as f64 / t as f64 * 100.0
+                ),
+                _ => format!("  downloading {name}: {}", human_bytes(done)),
+            };
+            last_line_len = redraw(&text, last_line_len);
+        }
+        UpdateEvent::Verifying(name) => {
+            clear(last_line_len);
+            last_line_len = 0;
+            println!("  verifying {name}");
+        }
+        UpdateEvent::Installing(name) => println!("  installing {name}"),
+    })?;
+    clear(last_line_len);
+    println!("updated to {}:", applied.version);
+    for p in &applied.replaced {
+        println!("  {}", p.display());
+    }
+    if applied.relaunch.is_some() {
+        println!("the new engine runs from your next command on");
+    }
+    Ok(())
+}
+
+fn cmd_settings(cmd: SettingsCmd) -> anyhow::Result<()> {
+    match cmd {
+        SettingsCmd::Show => {
+            let s = Settings::load();
+            println!("{}", Settings::path().display());
+            for (k, v) in s.entries() {
+                println!("  {k:<24} {v}");
+            }
+            if let Some(t) = s.last_update_check_unix {
+                println!("  {:<24} {}", "last_update_check", timefmt::readable(t));
+            }
+        }
+        SettingsCmd::Set { key, value } => {
+            let mut s = Settings::load();
+            s.set(&key, &value)?;
+            let path = s.save()?;
+            println!("{key} = {value}  (saved to {})", path.display());
+        }
+    }
     Ok(())
 }
 

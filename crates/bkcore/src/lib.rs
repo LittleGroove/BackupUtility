@@ -22,12 +22,19 @@ pub mod diskio;
 pub mod file;
 pub mod job;
 pub mod manifest;
+pub mod mounts;
 pub mod opt;
+pub mod paths;
 pub mod scheduler;
+pub mod settings;
 pub mod store;
 pub mod timefmt;
+pub mod update;
 pub mod usn;
 pub mod vss;
+
+/// The product version, shared by every crate in the workspace.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Bytes per chunk. 1 MiB is a good default: big enough that hashing overhead
 /// is negligible, small enough that a localized change re-transfers little.

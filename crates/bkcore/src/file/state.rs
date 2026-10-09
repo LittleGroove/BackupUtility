@@ -146,10 +146,7 @@ pub fn default_state_root() -> PathBuf {
         if super::sys::is_elevated() {
             PathBuf::from("/var/lib/bku/state")
         } else {
-            let home = std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("/tmp"));
-            home.join(".local/share/bku/state")
+            crate::paths::xdg("XDG_DATA_HOME", ".local/share").join("bku/state")
         }
     }
 }
@@ -344,6 +341,18 @@ impl SaveState {
     }
 
     /// Load an existing state, if there is one.
+    /// Read only the run summary, for a status display. Leaves the plan and
+    /// the journal alone, which for a large job are the expensive part.
+    pub fn peek(state_root: &Path, job: &str) -> Result<Option<RunState>> {
+        let run_path = Self::dir_for(state_root, job).join("run.json");
+        if !run_path.exists() {
+            return Ok(None);
+        }
+        let run: RunState = serde_json::from_slice(&fs::read(&run_path)?)
+            .map_err(|e| BkError::Other(anyhow::anyhow!("run.json is unreadable: {e}")))?;
+        Ok(Some(run))
+    }
+
     pub fn load(state_root: &Path, job: &str) -> Result<Option<(Self, Vec<Action>)>> {
         let dir = Self::dir_for(state_root, job);
         let run_path = dir.join("run.json");
@@ -605,8 +614,10 @@ fn read_journal(path: &Path) -> Result<Vec<u32>> {
     // affected action is simply redone.
     let whole = buf.len() - (buf.len() % REC);
     Ok(buf[..whole]
-        .chunks_exact(REC)
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .as_chunks::<REC>()
+        .0
+        .iter()
+        .map(|c| u32::from_le_bytes(*c))
         .collect())
 }
 

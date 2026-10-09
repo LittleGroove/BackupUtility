@@ -389,27 +389,9 @@ fn is_hhmm(s: &str) -> bool {
 // Storage
 // ---------------------------------------------------------------------------
 
-/// Where job files live by default.
+/// Where job files live by default: `jobs/` under the configuration root.
 pub fn default_jobs_dir() -> PathBuf {
-    #[cfg(windows)]
-    {
-        std::env::var_os("PROGRAMDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-            .join("BackupUtility")
-            .join("jobs")
-    }
-    #[cfg(not(windows))]
-    {
-        if crate::file::sys::is_elevated() {
-            PathBuf::from("/etc/bku/jobs")
-        } else {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("/tmp"))
-                .join(".config/bku/jobs")
-        }
-    }
+    crate::paths::config_root().join("jobs")
 }
 
 /// What [`JobStore::list`] returns: the jobs that parsed, and the files that
@@ -425,6 +407,11 @@ impl JobStore {
     pub fn open(dir: impl AsRef<Path>) -> Result<Self> {
         let dir = dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir)?;
+        // Only the machine-wide directory is tightened; a custom --jobs-dir is
+        // the operator's business.
+        if dir == default_jobs_dir() {
+            crate::paths::restrict_to_admins(&dir);
+        }
         Ok(JobStore { dir })
     }
 
@@ -442,13 +429,25 @@ impl JobStore {
         // Same atomic-replace discipline as everywhere else: a half-written
         // job file that a scheduled task then reads would be worse than none.
         let tmp = path.with_extension("json.tmp");
-        {
+        let write = || -> std::io::Result<()> {
             use std::io::Write;
             let mut f = std::fs::File::create(&tmp)?;
             f.write_all(&json)?;
             f.sync_all()?;
-        }
-        std::fs::rename(&tmp, &path)?;
+            std::fs::rename(&tmp, &path)
+        };
+        write().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                BkError::Other(anyhow::anyhow!(
+                    "cannot write {}: {e} — the jobs directory is reserved for \
+                     administrators because scheduled runs execute as SYSTEM; \
+                     run this from an elevated prompt",
+                    path.display()
+                ))
+            } else {
+                BkError::Io(e)
+            }
+        })?;
         Ok(path)
     }
 

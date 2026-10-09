@@ -20,25 +20,54 @@ use bkcore::file::state::{self as filestate, Progress};
 use bkcore::file::Cancel;
 use bkcore::job::{Frequency, Job, JobKind, JobStore, Schedule};
 use bkcore::opt::{media, OptimizeSettings};
+use bkcore::settings::{Settings, Theme};
 use bkcore::timefmt;
+use bkcore::update::{self, Release, UpdateEvent};
 use eframe::egui;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 fn main() -> eframe::Result<()> {
+    #[cfg(windows)]
+    set_app_user_model_id();
+    // Sweep what an earlier self-update parked beside the binaries.
+    if let Ok(dir) = bkcore::paths::install_dir() {
+        let _ = update::cleanup_old_binaries(&dir);
+    }
+
+    let icon = egui::IconData {
+        rgba: include_bytes!("../../../assets/icon_64.rgba").to_vec(),
+        width: 64,
+        height: 64,
+    };
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1060.0, 700.0])
             .with_min_inner_size([820.0, 520.0])
-            .with_title("BackupUtility"),
+            .with_title(format!("BackupUtility {}", bkcore::VERSION))
+            .with_icon(std::sync::Arc::new(icon)),
         ..Default::default()
     };
     eframe::run_native(
         "BackupUtility",
         opts,
-        Box::new(|_cc| Ok(Box::new(App::new()))),
+        Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)))),
     )
+}
+
+/// Tell the Windows shell which application this process is, so the taskbar
+/// groups and pins it under one identity instead of the exe path — which
+/// changes when the tool is moved, and would otherwise split pinned icons.
+#[cfg(windows)]
+fn set_app_user_model_id() {
+    use windows::core::w;
+    use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+    // SAFETY: a plain Win32 call with a static, null-terminated wide string.
+    unsafe {
+        let _ = SetCurrentProcessExplicitAppUserModelID(w!("LittleGroove.BackupUtility"));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -88,10 +117,44 @@ struct App {
     history: Vec<std::path::PathBuf>,
     /// A log the user opened, held as (path, contents).
     viewing_log: Option<(std::path::PathBuf, String)>,
+    settings: Settings,
+    show_settings: bool,
+    updates: UpdateState,
+    /// The last run of each job, read from its `run.json`.
+    statuses: HashMap<String, Option<filestate::RunState>>,
+}
+
+/// What an update check produced: a newer release, nothing new, or why it
+/// could not tell.
+type CheckResult = Result<Option<Release>, String>;
+
+/// Everything about update checks and installs, kept apart from the job UI.
+#[derive(Default)]
+struct UpdateState {
+    /// Filled by the check thread.
+    check: Arc<Mutex<Option<CheckResult>>>,
+    checking: bool,
+    /// The user clicked "Check now", so "nothing new" deserves a message.
+    manual: bool,
+    /// The release the banner offers.
+    offered: Option<Release>,
+    /// Banner dismissed for this session.
+    dismissed: bool,
+    show_notes: bool,
+    install: Option<InstallHandle>,
+}
+
+struct InstallHandle {
+    version: String,
+    status: Arc<Mutex<String>>,
+    fraction: Arc<Mutex<Option<f32>>>,
+    result: Arc<Mutex<Option<Result<update::Applied, String>>>>,
+    done: Arc<AtomicBool>,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(ctx: &egui::Context) -> Self {
+        let settings = Settings::load();
         let mut app = App {
             store: None,
             jobs: Vec::new(),
@@ -107,7 +170,12 @@ impl App {
             confirm_delete: false,
             history: Vec::new(),
             viewing_log: None,
+            settings,
+            show_settings: false,
+            updates: UpdateState::default(),
+            statuses: HashMap::new(),
         };
+        app.apply_theme(ctx);
         match JobStore::open(bkcore::job::default_jobs_dir()) {
             Ok(s) => {
                 app.store = Some(s);
@@ -116,6 +184,9 @@ impl App {
             Err(e) => app.load_error = Some(format!("cannot open the jobs directory: {e}")),
         }
         app.refresh_drives();
+        if app.settings.check_updates_on_start {
+            app.start_update_check(ctx, false);
+        }
         app
     }
 
@@ -125,6 +196,7 @@ impl App {
                 Ok((jobs, broken)) => {
                     self.jobs = jobs;
                     self.broken = broken;
+                    self.reload_statuses();
                 }
                 Err(e) => self.load_error = Some(e.to_string()),
             }
@@ -132,16 +204,7 @@ impl App {
     }
 
     fn refresh_drives(&mut self) {
-        self.drives.clear();
-        #[cfg(windows)]
-        for letter in 'A'..='Z' {
-            let root = format!("{letter}:\\");
-            if std::path::Path::new(&root).exists() {
-                if let Ok(info) = media::probe(&letter.to_string()) {
-                    self.drives.push(info);
-                }
-            }
-        }
+        self.drives = media::list_volumes();
     }
 
     fn notify(&mut self, message: impl Into<String>, is_error: bool) {
@@ -336,6 +399,8 @@ impl App {
             Some(Err(e)) => self.notify(format!("'{}' failed: {e}", handle.job_name), true),
             None => self.notify("the run ended without reporting a result", true),
         }
+        self.reload_statuses();
+        self.reload_history();
     }
 }
 
@@ -380,16 +445,23 @@ fn engine_beside(gui_exe: &std::path::Path) -> std::path::PathBuf {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.reap_run();
+        self.reap_update_check();
+        self.reap_install(ctx);
+        self.apply_theme(ctx);
         if self.run.is_some() {
             // Keep the elapsed time and rate ticking even between engine events.
             ctx.request_repaint_after(Duration::from_millis(250));
         }
 
         self.top_bar(ctx);
+        self.update_banner(ctx);
         self.side_panel(ctx);
         self.central(ctx);
         self.confirm_dialog(ctx);
         self.log_viewer(ctx);
+        self.settings_window(ctx);
+        self.notes_window(ctx);
+        self.install_window(ctx);
     }
 }
 
@@ -399,15 +471,17 @@ impl App {
             ui.horizontal(|ui| {
                 ui.heading("BackupUtility");
                 ui.separator();
-                if bkcore::file::sys::is_elevated() {
-                    ui.colored_label(egui::Color32::from_rgb(0x4C, 0xAF, 0x50), "elevated");
-                } else {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(0xE5, 0x7A, 0x24),
-                        "not elevated — VSS, layout moves and scheduling are unavailable",
-                    );
-                }
+                let (colour, notice) = privilege_notice();
+                ui.colored_label(colour, notice);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .selectable_label(self.show_settings, "⚙ Settings")
+                        .on_hover_text("Updates, theme, and where files live")
+                        .clicked()
+                    {
+                        self.show_settings = !self.show_settings;
+                    }
+                    ui.separator();
                     if let Some((msg, is_error, at)) = &self.toast {
                         if at.elapsed() < Duration::from_secs(8) {
                             let colour = if *is_error {
@@ -455,12 +529,22 @@ impl App {
                             } else {
                                 job.name.clone()
                             };
-                            if ui
-                                .selectable_label(self.selected == Some(i), label)
-                                .clicked()
-                            {
-                                clicked = Some(i);
-                            }
+                            let (colour, badge, hover) =
+                                status_badge(self.statuses.get(&job.name).and_then(|s| s.as_ref()));
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .selectable_label(self.selected == Some(i), label)
+                                    .clicked()
+                                {
+                                    clicked = Some(i);
+                                }
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.colored_label(colour, badge).on_hover_text(hover);
+                                    },
+                                );
+                            });
                         }
                         if let Some(i) = clicked {
                             self.select(i);
@@ -717,10 +801,7 @@ impl App {
                     }
                 });
                 changed |= ui
-                    .checkbox(
-                        &mut s.run_as_system,
-                        "run as SYSTEM (works with nobody logged in)",
-                    )
+                    .checkbox(&mut s.run_as_system, run_as_system_label())
                     .changed();
                 changed |= ui
                     .checkbox(&mut s.run_if_missed, "run late if the machine was off")
@@ -1104,5 +1185,476 @@ fn unique_name(jobs: &[Job]) -> String {
             return candidate;
         }
         n += 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Settings, updates, status
+// ---------------------------------------------------------------------------
+
+impl App {
+    /// Read each job's last run summary. One small file per job; no plans or
+    /// journals are opened.
+    fn reload_statuses(&mut self) {
+        self.statuses.clear();
+        for job in &self.jobs {
+            let root = job
+                .state_root
+                .clone()
+                .unwrap_or_else(bkcore::file::state::default_state_root);
+            let run = filestate::SaveState::peek(&root, &job.name).ok().flatten();
+            self.statuses.insert(job.name.clone(), run);
+        }
+    }
+
+    fn apply_theme(&self, ctx: &egui::Context) {
+        match self.settings.theme {
+            Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
+            Theme::Light => ctx.set_visuals(egui::Visuals::light()),
+            // Follow the system: eframe set it at startup and tracks changes.
+            Theme::System => {}
+        }
+    }
+
+    fn save_settings(&mut self) {
+        if let Err(e) = self.settings.save() {
+            self.notify(format!("settings were not saved: {e}"), true);
+        }
+    }
+
+    /// Ask GitHub on a background thread. `manual` means the user asked, so
+    /// the outcome is always reported.
+    fn start_update_check(&mut self, ctx: &egui::Context, manual: bool) {
+        if self.updates.checking {
+            return;
+        }
+        self.updates.checking = true;
+        self.updates.manual = manual;
+        let beta = self.settings.beta_updates;
+        let slot = self.updates.check.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = update::Updater::github()
+                .check(beta)
+                .map_err(|e| e.to_string());
+            *slot.lock().unwrap() = Some(result);
+            ctx.request_repaint();
+        });
+    }
+
+    fn reap_update_check(&mut self) {
+        if !self.updates.checking {
+            return;
+        }
+        let Some(result) = self.updates.check.lock().unwrap().take() else {
+            return;
+        };
+        self.updates.checking = false;
+        self.settings.last_update_check_unix = Some(timefmt::now_unix());
+        let manual = self.updates.manual;
+        match result {
+            Ok(Some(release)) => {
+                let skipped = self.settings.skipped_version.as_deref()
+                    == Some(release.version.to_string().as_str());
+                if skipped && !manual {
+                    // They asked not to hear about this one again.
+                } else {
+                    self.updates.offered = Some(release);
+                    self.updates.dismissed = false;
+                }
+            }
+            Ok(None) => {
+                if manual {
+                    self.notify(
+                        format!("you have the newest version ({})", bkcore::VERSION),
+                        false,
+                    );
+                }
+            }
+            Err(e) => {
+                if manual {
+                    self.notify(format!("could not check for updates: {e}"), true);
+                }
+            }
+        }
+        self.save_settings();
+    }
+
+    /// A strip under the top bar offering the newer release.
+    fn update_banner(&mut self, ctx: &egui::Context) {
+        if self.updates.dismissed || self.updates.install.is_some() {
+            return;
+        }
+        let Some(release) = self.updates.offered.clone() else {
+            return;
+        };
+        let mut install = false;
+        let mut later = false;
+        let mut skip = false;
+        let mut notes = false;
+        egui::TopBottomPanel::top("update-banner").show(ctx, |ui| {
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.colored_label(
+                    egui::Color32::from_rgb(0x4C, 0xAF, 0x50),
+                    format!(
+                        "Version {} is available{} — you have {}.",
+                        release.version,
+                        if release.prerelease {
+                            " (pre-release)"
+                        } else {
+                            ""
+                        },
+                        bkcore::VERSION
+                    ),
+                );
+                let busy = self.run.is_some();
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Update now"))
+                    .on_hover_text("Downloads the new binaries, verifies them and restarts")
+                    .on_disabled_hover_text("Wait for the running job to finish")
+                    .clicked()
+                {
+                    install = true;
+                }
+                if ui.button("What's new").clicked() {
+                    notes = true;
+                }
+                if ui.button("Later").clicked() {
+                    later = true;
+                }
+                if ui
+                    .button("Skip this version")
+                    .on_hover_text("Do not offer this version again")
+                    .clicked()
+                {
+                    skip = true;
+                }
+            });
+            ui.add_space(2.0);
+        });
+        if install {
+            self.start_install(ctx, release);
+        } else if notes {
+            self.updates.show_notes = true;
+        } else if later {
+            self.updates.dismissed = true;
+        } else if skip {
+            self.settings.skipped_version = Some(release.version.to_string());
+            self.updates.dismissed = true;
+            self.save_settings();
+        }
+    }
+
+    fn start_install(&mut self, ctx: &egui::Context, release: Release) {
+        if self.updates.install.is_some() || self.run.is_some() {
+            return;
+        }
+        let handle = InstallHandle {
+            version: release.version.to_string(),
+            status: Arc::new(Mutex::new("starting".into())),
+            fraction: Arc::new(Mutex::new(None)),
+            result: Arc::new(Mutex::new(None)),
+            done: Arc::new(AtomicBool::new(false)),
+        };
+        let (status, fraction, result, done) = (
+            handle.status.clone(),
+            handle.fraction.clone(),
+            handle.result.clone(),
+            handle.done.clone(),
+        );
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let updater = update::Updater::github();
+            let outcome = update::apply(&updater, &release, &mut |event| {
+                match event {
+                    UpdateEvent::Downloading { name, done, total } => {
+                        *status.lock().unwrap() = match total {
+                            Some(t) if t > 0 => format!(
+                                "downloading {name} — {} of {}",
+                                human_bytes(done),
+                                human_bytes(t)
+                            ),
+                            _ => format!("downloading {name} — {}", human_bytes(done)),
+                        };
+                        *fraction.lock().unwrap() =
+                            total.filter(|t| *t > 0).map(|t| done as f32 / t as f32);
+                    }
+                    UpdateEvent::Verifying(name) => {
+                        *status.lock().unwrap() = format!("verifying {name}");
+                    }
+                    UpdateEvent::Installing(name) => {
+                        *status.lock().unwrap() = format!("installing {name}");
+                        *fraction.lock().unwrap() = None;
+                    }
+                }
+                ctx.request_repaint();
+            });
+            *result.lock().unwrap() = Some(outcome.map_err(|e| e.to_string()));
+            done.store(true, Ordering::SeqCst);
+            ctx.request_repaint();
+        });
+        self.updates.install = Some(handle);
+    }
+
+    fn reap_install(&mut self, ctx: &egui::Context) {
+        let finished = self
+            .updates
+            .install
+            .as_ref()
+            .is_some_and(|h| h.done.load(Ordering::SeqCst));
+        if !finished {
+            return;
+        }
+        let handle = self.updates.install.take().unwrap();
+        let outcome = handle.result.lock().unwrap().take();
+        match outcome {
+            Some(Ok(applied)) => {
+                self.updates.offered = None;
+                match &applied.relaunch {
+                    Some(exe) => match update::relaunch(exe, &[]) {
+                        Ok(_) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                        Err(e) => self.notify(
+                            format!(
+                                "updated to {}, but could not restart automatically ({e}) — close and reopen",
+                                applied.version
+                            ),
+                            true,
+                        ),
+                    },
+                    None => self.notify(
+                        format!("updated to {} — restart to use it", applied.version),
+                        false,
+                    ),
+                }
+            }
+            Some(Err(e)) => self.notify(format!("update to {} failed: {e}", handle.version), true),
+            None => self.notify("the update ended without reporting a result", true),
+        }
+    }
+
+    fn install_window(&mut self, ctx: &egui::Context) {
+        let Some(handle) = &self.updates.install else {
+            return;
+        };
+        let status = handle.status.lock().unwrap().clone();
+        let fraction = *handle.fraction.lock().unwrap();
+        egui::Window::new(format!("Updating to {}", handle.version))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_min_width(380.0);
+                ui.label(&status);
+                ui.add_space(4.0);
+                let bar = match fraction {
+                    Some(f) => egui::ProgressBar::new(f).show_percentage(),
+                    None => egui::ProgressBar::new(0.0).animate(true),
+                };
+                ui.add(bar.desired_width(ui.available_width()));
+                ui.add_space(4.0);
+                ui.weak("The window closes and reopens on the new version when this finishes.");
+            });
+    }
+
+    fn notes_window(&mut self, ctx: &egui::Context) {
+        if !self.updates.show_notes {
+            return;
+        }
+        let Some(release) = &self.updates.offered else {
+            self.updates.show_notes = false;
+            return;
+        };
+        let mut open = true;
+        egui::Window::new(format!("What's new in {}", release.version))
+            .open(&mut open)
+            .default_size([620.0, 420.0])
+            .show(ctx, |ui| {
+                ui.hyperlink_to("Open the release page", &release.url);
+                ui.separator();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let notes = if release.notes.trim().is_empty() {
+                        "(no release notes)"
+                    } else {
+                        release.notes.as_str()
+                    };
+                    ui.label(notes);
+                });
+            });
+        if !open {
+            self.updates.show_notes = false;
+        }
+    }
+
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        if !self.show_settings {
+            return;
+        }
+        let mut open = true;
+        let mut changed = false;
+        let mut check_now = false;
+        egui::Window::new("Settings")
+            .open(&mut open)
+            .default_width(520.0)
+            .show(ctx, |ui| {
+                ui.strong("Updates");
+                changed |= ui
+                    .checkbox(
+                        &mut self.settings.check_updates_on_start,
+                        "check for a newer version when the app starts",
+                    )
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut self.settings.beta_updates, "include beta (pre-release) versions")
+                    .on_hover_text("Betas come out more often and may be less tested. Turning this off never downgrades you.")
+                    .changed();
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(!self.updates.checking, egui::Button::new("Check now"))
+                        .clicked()
+                    {
+                        check_now = true;
+                    }
+                    if self.updates.checking {
+                        ui.spinner();
+                        ui.weak("checking…");
+                    } else if let Some(t) = self.settings.last_update_check_unix {
+                        ui.weak(format!("last checked {}", timefmt::readable(t)));
+                    }
+                });
+                if let Some(v) = self.settings.skipped_version.clone() {
+                    ui.horizontal(|ui| {
+                        ui.weak(format!("version {v} is being skipped"));
+                        if ui.small_button("offer it again").clicked() {
+                            self.settings.skipped_version = None;
+                            changed = true;
+                        }
+                    });
+                }
+
+                ui.add_space(8.0);
+                ui.strong("Appearance");
+                ui.horizontal(|ui| {
+                    ui.label("Theme");
+                    changed |= combo(
+                        ui,
+                        "theme",
+                        &mut self.settings.theme,
+                        &[
+                            (Theme::System, "follow the system"),
+                            (Theme::Dark, "dark"),
+                            (Theme::Light, "light"),
+                        ],
+                    );
+                });
+
+                ui.add_space(8.0);
+                ui.strong("About");
+                ui.label(format!(
+                    "BackupUtility {} ({})",
+                    bkcore::VERSION,
+                    update::platform_tag()
+                ));
+                ui.hyperlink_to("Releases and source on GitHub", update::RELEASES_URL);
+                ui.add_space(4.0);
+                egui::Grid::new("paths").num_columns(2).show(ui, |ui| {
+                    let row = |ui: &mut egui::Ui, k: &str, v: String| {
+                        ui.weak(k);
+                        ui.add(egui::Label::new(egui::RichText::new(v).monospace()).selectable(true));
+                        ui.end_row();
+                    };
+                    row(
+                        ui,
+                        "program",
+                        bkcore::paths::install_dir()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default(),
+                    );
+                    row(ui, "jobs", bkcore::job::default_jobs_dir().display().to_string());
+                    row(ui, "state and logs", bkcore::paths::state_root().display().to_string());
+                    row(ui, "settings", Settings::path().display().to_string());
+                });
+            });
+        if changed {
+            self.save_settings();
+        }
+        if check_now {
+            self.start_update_check(ctx, true);
+        }
+        if !open {
+            self.show_settings = false;
+        }
+    }
+}
+
+/// What the top bar says about privileges, per platform. Running as a user on
+/// Linux is the normal state, not a warning.
+fn privilege_notice() -> (egui::Color32, &'static str) {
+    let ok = egui::Color32::from_rgb(0x4C, 0xAF, 0x50);
+    let warn = egui::Color32::from_rgb(0xE5, 0x7A, 0x24);
+    let info = egui::Color32::GRAY;
+    let elevated = bkcore::file::sys::is_elevated();
+    if cfg!(windows) {
+        if elevated {
+            (ok, "elevated")
+        } else {
+            (
+                warn,
+                "not elevated — NTFS permissions, layout moves and scheduled tasks need Administrator",
+            )
+        }
+    } else if elevated {
+        (ok, "running as root — schedules install as system timers")
+    } else {
+        (
+            info,
+            "running as a user — schedules install as user timers; files you cannot read are skipped",
+        )
+    }
+}
+
+fn run_as_system_label() -> &'static str {
+    if cfg!(windows) {
+        "run as SYSTEM (works with nobody logged in)"
+    } else {
+        "run as a system service (needs root; as a user this installs a user timer instead)"
+    }
+}
+
+/// A short badge for the job list: the last run's outcome and when.
+fn status_badge(run: Option<&filestate::RunState>) -> (egui::Color32, String, String) {
+    use bkcore::file::state::RunStatus;
+    let Some(run) = run else {
+        return (
+            egui::Color32::GRAY,
+            "never run".into(),
+            "This job has not run yet".into(),
+        );
+    };
+    let when = run
+        .finished_unix
+        .map(timefmt::readable)
+        .unwrap_or_else(|| timefmt::readable(run.started_unix));
+    match run.status {
+        RunStatus::Completed => (
+            egui::Color32::from_rgb(0x4C, 0xAF, 0x50),
+            format!("✓ {when}"),
+            "Last run completed".into(),
+        ),
+        RunStatus::Failed => (
+            egui::Color32::from_rgb(0xD1, 0x4A, 0x4A),
+            format!("✗ {when}"),
+            "Last run failed — see the run history".into(),
+        ),
+        RunStatus::Cancelled => (
+            egui::Color32::from_rgb(0xE5, 0x7A, 0x24),
+            format!("⏸ {when}"),
+            "Last run was stopped; the next run resumes it".into(),
+        ),
+        RunStatus::Running => (
+            egui::Color32::from_rgb(0xE5, 0x7A, 0x24),
+            format!("… {when}"),
+            "Running now, or interrupted without a chance to save; the next run resumes it".into(),
+        ),
     }
 }
