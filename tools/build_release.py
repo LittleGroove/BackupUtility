@@ -336,8 +336,18 @@ def main():
 
     out = STAGING / tag
     if out.exists():
+        # Rename first: a directory with a running executable inside cannot be
+        # renamed on Windows, so this fails before anything is deleted, rather
+        # than deleting half the folder and stopping on the locked file.
+        parked = STAGING / f"{tag}.replaced-{int(time.time())}"
+        try:
+            out.rename(parked)
+        except OSError as e:
+            die(f"cannot replace {out.relative_to(ROOT)}: {e}\n"
+                f"  something is still running from it (bkgui.exe or bkengine.exe started "
+                f"from the staging folder?) — close it and run this again")
         say(f"replacing existing {out.relative_to(ROOT)}")
-        shutil.rmtree(out)
+        shutil.rmtree(parked, ignore_errors=True)
     win_dir = out / "windows-x86_64"
     lin_dir = out / "linux-x86_64"
     rel_dir = out / "release"
