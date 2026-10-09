@@ -20,6 +20,7 @@ bkengine mirror --source D:\ --dest E:\
 | **Run logs** | every run leaves a log on disk, so a scheduled job that failed at 3am can actually be diagnosed |
 | **Verification** | compare the two trees on demand, shallow or by hashing every byte — the check that answers "is the spare still good?" |
 | **Scheduling** | Task Scheduler XML on Windows, systemd timers on Linux — with the settings that actually matter (catch up a missed run, do not die on battery, no execution time limit) |
+| **Built-in updates** | the window checks the [releases page](https://github.com/LittleGroove/BackupUtility/releases) at startup and installs a newer version in place; `bkengine update` does the same from a terminal. Every download is verified against `SHA256SUMS` first |
 | **Disk optimization** | *opt-in per job.* Detects HDD vs SSD and does the right thing — defragment spinning disks, retrim solid state, never the other way round. Media and capacity are read without needing Administrator |
 | **Layout mirroring** | *opt-in per job.* Places files on the spare at the same physical cluster positions they occupy on the source |
 | **Block-level imaging** | the original pipeline: deduplicated, changed-block volume images with restore and clone. Quiesced devices only — see below |
@@ -57,6 +58,61 @@ bkengine verify --job photos --deep
 ```
 
 Or run `bkgui` for the same thing with a window.
+
+## Installing
+
+There is no installer. Each release on the
+[releases page](https://github.com/LittleGroove/BackupUtility/releases) carries:
+
+| | |
+|---|---|
+| `BackupUtility-vX.Y.Z-windows-x86_64.zip` | Windows 10 and 11. Unzip anywhere that will stay put (scheduled tasks point at `bkengine.exe` by its absolute path), then run `bkgui.exe`. It asks for Administrator once per launch. |
+| `BackupUtility-vX.Y.Z-linux-x86_64.tar.gz` | Linux, including SteamOS. Untar and run `sh install.sh`: it puts the binaries under `~/.local/share/BackupUtility`, links them into `~/.local/bin`, and adds an application-menu entry. No root needed. Run it as root to install under `/opt` instead. |
+
+The bare `bkengine-*` / `bkgui-*` files and `SHA256SUMS` are what the updater
+downloads; you do not need them by hand.
+
+### Where things live
+
+| | Windows | Linux as root | Linux as a user |
+|---|---|---|---|
+| jobs and settings | `%PROGRAMDATA%\BackupUtility` | `/etc/bku` | `~/.config/bku` |
+| save states and run logs | `%PROGRAMDATA%\BackupUtility\state` | `/var/lib/bku/state` | `~/.local/share/bku/state` |
+| scheduled jobs | Task Scheduler, folder `BackupUtility` | `/etc/systemd/system/bku-*.timer` | `~/.config/systemd/user/bku-*.timer` |
+
+`bkengine version` prints the paths for the machine it runs on.
+
+### SteamOS
+
+The Linux build runs as the `deck` user with nothing from the read-only root
+filesystem touched: jobs schedule as **user-level systemd timers**, and
+registering one enables lingering so they fire with no desktop session open. In
+Desktop Mode the app menu has a BackupUtility entry; from a terminal it is
+`bkgui` or `bkengine`. Mirroring an NTFS drive mounted through the kernel
+driver (`ntfs3`) carries data, timestamps and attributes; NTFS security
+descriptors and alternate data streams are a Windows-only feature and are
+reported as skipped, not failed.
+
+## Updating
+
+`bkgui` asks GitHub for a newer release when it starts (Settings turns this
+off, or opts into betas) and shows a banner: **Update now** downloads the new
+binaries into the program folder, verifies each against the release's
+`SHA256SUMS`, swaps them in, and restarts the window. Nothing else is touched:
+jobs, schedules, save states and logs stay where they are, and a scheduled run
+that happens to be in progress keeps running from the renamed old engine.
+
+From a terminal, or on a machine without a desktop:
+
+```powershell
+bkengine update --check     # is there a newer release?
+bkengine update             # install it (asks first; --yes to skip the question)
+bkengine settings set beta_updates true
+```
+
+A beta is the same build published as a pre-release. The updater ignores
+pre-releases unless asked, a beta user still gets a stable release when that
+is the newer one, and turning betas off never downgrades anyone.
 
 ## The mirror
 
@@ -234,8 +290,9 @@ at its trigger time with no interactive UAC prompt.
 Inside `bkcore`:
 
 ```text
-file/    path  meta  filter  walk  plan  state  copy  mirror  sys
+file/    path  meta  filter  walk  plan  state  copy  mirror  sys  attic  verify
 opt/     media  optimize  extents  layout
+         job  scheduler  settings  paths  update  mounts  timefmt
          chunk  manifest  store  backup  apply  diskio  vss  usn   (block level)
 ```
 
@@ -258,26 +315,39 @@ The plan is emitted in phases, and each exists for a concrete reason:
 
 ### Platform
 
-Windows is what is implemented and tested. The seam is clean: `path`, `meta`,
-`filter`, `plan`, `state` and `mirror` carry no platform types, and `sys`, `copy`
-and `opt` are `#[cfg]`-gated.
+Windows is where the NTFS fidelity work lives. The seam is clean: `path`,
+`meta`, `filter`, `plan`, `state`, `mirror`, `update` and `settings` carry no
+platform types, and `sys`, `copy`, `scheduler` and `opt` are `#[cfg]`-gated.
 
-The Linux building blocks are real, not stubs — `SEEK_DATA`/`SEEK_HOLE` sparse
-copying, `utimensat` nanosecond timestamps, `/sys/block/*/queue/rotational` media
-detection, `fstrim`, systemd timer and crontab generation — but they are
-**untested**, because there is no Linux here to test them on. Two gaps are
-honestly reported rather than faked: extent maps need `FS_IOC_FIEMAP`, and
-cluster placement has no ext4 equivalent (`EXT4_IOC_MOVE_EXT` targets a donor
-file, not an absolute position).
+On Linux the same test suite runs in CI on Ubuntu 22.04 and locally under WSL:
+`SEEK_DATA`/`SEEK_HOLE` sparse copying, `utimensat` nanosecond timestamps,
+filesystem detection from `/proc/self/mounts` (so an exFAT or FAT destination
+gets the right timestamp tolerance), `/sys/block/*/queue/rotational` media
+detection, `fstrim`, and systemd units at system or user level. Two gaps are
+reported rather than faked: extent maps need `FS_IOC_FIEMAP`, and cluster
+placement has no ext4 equivalent (`EXT4_IOC_MOVE_EXT` targets a donor file,
+not an absolute position), so the layout pass declines on Linux.
 
 ## Building
 
-Needs Rust with the MSVC toolchain and "Desktop development with C++".
+Windows: Rust with the MSVC toolchain and "Desktop development with C++" (the
+Windows SDK provides `rc.exe`, which compiles the icon and version resources).
+Linux: Rust plus `libgtk-3-dev libxkbcommon-dev libwayland-dev` for the window.
 
 ```powershell
 cargo build --workspace
-cargo test  --workspace      # 223 tests
+cargo test  --workspace
 ```
+
+One version number, in `Cargo.toml` under `[workspace.package]`, is embedded in
+both binaries and compared against the release tag by the updater. The icon is
+generated by `tools/make_icon.py`; `assets/` holds the output.
+
+### Releasing
+
+`tools/build_release.py` builds both platforms into `STAGING/vX.Y.Z/` for
+testing by hand; `tools/publish_release.py` pushes the source, tags, and
+creates the GitHub release the updater reads. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Running the GUI
 
@@ -298,13 +368,16 @@ are visible while testing; release builds hide it.
 
 ## Testing
 
-`cargo test` covers the engine: 189 unit tests plus 34 integration tests that
+`cargo test` covers the engine: unit tests plus integration tests that
 mirror real trees on disk and assert the destination matches, that a second run
 copies nothing, that an interrupted run resumes without redoing finished work,
 that read-only files can be replaced, that a cancelled copy leaves no file at the
 real path, that the attic prunes to its limit without ever emptying itself, that
 every run leaves a log (including one that refused to start), and that hashing
-catches a corrupted destination byte that size-and-time cannot see.
+catches a corrupted destination byte that size-and-time cannot see. The updater
+is tested end to end against a local HTTP server: a release is downloaded,
+verified and swapped into a scratch directory, and a bad checksum or a missing
+checksum entry installs nothing. The suite runs on Windows and Linux in CI.
 
 Two elevated harnesses cover what needs real disks. Both create disposable VHDs
 and refuse to touch any disk whose `BusType` is not `File Backed Virtual`, so
@@ -361,12 +434,21 @@ first and writes only the blocks that differ.
 - [x] fragmentation analysis from cluster maps
 - [x] layout mirroring via `FSCTL_MOVE_FILE`, with eviction to clear targets
 - [x] Task Scheduler XML + systemd timers + crontab
-- [x] GUI: job editor, live progress, drive list, run and stop
+- [x] GUI: job editor, live progress, drive list, run and stop, run history,
+      last-run status per job, settings
+- [x] built-in updater from GitHub Releases, with checksum verification, stable
+      and beta channels
+- [x] release pipeline: staged builds, CI on both platforms, one-command publish
+- [x] application identity: icon, version resources, AppUserModelID, manifests
 - [x] block-level image, restore, clone, validated against VHDs
 - [x] validated on real NTFS volumes: mirror, deep verification, delete mode, and
       a layout pass that took similarity from 0% to 50-70% with every file still
       hashing identically afterwards (`scripts\vhd_mirror_test.ps1`)
-- [ ] Windows 11 (developed and tested on Windows 10 19045)
+- [x] Windows 11 (the test suite and the real-volume mirror run on 26200;
+      developed on Windows 10 19045)
+- [x] Linux: builds and passes the suite on Ubuntu 22.04 (CI and WSL); user-level
+      systemd timers for SteamOS
+- [ ] Linux on real hardware: a mirror on a Steam Deck has not been run yet
 - [ ] `vss`: live-volume snapshot, so `C:` can be imaged while running
 - [ ] `usn`: change-journal incremental, to skip the full scan
-- [ ] Linux: `FS_IOC_FIEMAP` extents, and anything at all actually tested
+- [ ] Linux: `FS_IOC_FIEMAP` extents

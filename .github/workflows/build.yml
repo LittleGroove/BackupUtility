@@ -1,0 +1,77 @@
+# Build and test on both platforms.
+#
+# Runs on every push to main and every pull request as a check, and on demand
+# (workflow_dispatch) as the Linux build farm for a release: tools/build_release.py
+# triggers it, waits, and downloads the `linux-x86_64` artifact into STAGING/.
+# Releases themselves are created by tools/publish_release.py from STAGING, so
+# this workflow never publishes anything.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  linux:
+    name: linux-x86_64
+    # 22.04 for its glibc (2.35): a binary built here runs on SteamOS 3.5+ and
+    # on any distribution released since 2022.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: System libraries for the GUI (GTK for the file picker, XKB/Wayland for the window)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libxkbcommon-dev libwayland-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --release --workspace
+      - name: Stage binaries
+        run: |
+          mkdir -p out
+          cp target/release/bkengine target/release/bkgui out/
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: out/
+          if-no-files-found: error
+
+  windows:
+    name: windows-x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --release --workspace
+      - name: Stage binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item target/release/bkengine.exe, target/release/bkgui.exe out/
+          Get-ChildItem out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: out/
+          if-no-files-found: error
