@@ -442,6 +442,7 @@ fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    bkcore::file::sys::reset_sigpipe();
     let cli = Cli::parse();
     let cancel = install_signal_handler();
 
@@ -1030,19 +1031,19 @@ fn cmd_schedule(jobs_dir: &Option<PathBuf>, cmd: ScheduleCmd) -> anyhow::Result<
                 );
             }
             bkcore::scheduler::register(&j, &exe, Some(store.dir()))?;
-            println!("registered scheduled task '{}'", j.task_name());
+            println!("registered {}", bkcore::scheduler::describe(&j));
         }
         ScheduleCmd::Remove { job } => {
             let j = store.load(&job)?;
             bkcore::scheduler::unregister(&j)?;
-            println!("removed scheduled task '{}'", j.task_name());
+            println!("removed {}", bkcore::scheduler::describe(&j));
         }
         ScheduleCmd::Status { job } => {
             let j = store.load(&job)?;
             println!(
-                "job '{}': task '{}' is {}",
+                "job '{}': {} is {}",
                 j.name,
-                j.task_name(),
+                bkcore::scheduler::describe(&j),
                 if bkcore::scheduler::is_registered(&j) {
                     "registered"
                 } else {

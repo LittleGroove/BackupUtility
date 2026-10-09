@@ -303,6 +303,11 @@ fn read_platform_meta(e: &mut Entry, _full: &Path, md: &std::fs::Metadata) {
     use std::os::unix::fs::MetadataExt;
     e.mode = md.mode();
     e.modified = FileTime::from_unix_secs_nanos(md.mtime(), md.mtime_nsec() as u32);
+    // Unix has no sparse attribute; a file whose allocated blocks fall short
+    // of its length has holes. The same heuristic GNU cp --sparse=auto uses.
+    if md.is_file() && md.blocks().saturating_mul(512) < md.len() {
+        e.attrs |= attr::SPARSE_FILE;
+    }
     e.accessed = Some(FileTime::from_unix_secs_nanos(
         md.atime(),
         md.atime_nsec() as u32,

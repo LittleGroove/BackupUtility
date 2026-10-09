@@ -37,6 +37,24 @@ use std::process::Command;
 /// name because that name is localized.
 const SYSTEM_SID: &str = "S-1-5-18";
 
+/// How the registration is called on this platform, for messages:
+/// the Task Scheduler name on Windows, the timer unit on Linux.
+pub fn describe(job: &Job) -> String {
+    #[cfg(windows)]
+    {
+        format!("scheduled task '{}'", job.task_name())
+    }
+    #[cfg(not(windows))]
+    {
+        let (_, user) = unit_location();
+        format!(
+            "systemd timer '{}.timer' ({})",
+            unit_stem(job),
+            if user { "user" } else { "system" }
+        )
+    }
+}
+
 /// Build the command line a scheduled task runs.
 pub fn action_for(job: &Job, engine_exe: &Path) -> (String, String) {
     (

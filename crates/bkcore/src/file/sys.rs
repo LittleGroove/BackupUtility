@@ -274,6 +274,20 @@ pub use imp::{
 #[cfg(windows)]
 pub use imp::{wide, OwnedHandle};
 
+/// Let a pipe closing early (`bkengine status | head`) end the process
+/// quietly instead of panicking on the next `println!`. Rust ignores SIGPIPE
+/// by default so writes report EPIPE; a command-line tool wants the shell
+/// convention back. No-op on Windows.
+pub fn reset_sigpipe() {
+    #[cfg(unix)]
+    {
+        // SAFETY: restoring the default disposition of a signal is always valid.
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        }
+    }
+}
+
 /// `path` itself if it exists, else its closest existing ancestor. A
 /// destination folder usually does not exist before the first run, but the
 /// volume it will live on does.
