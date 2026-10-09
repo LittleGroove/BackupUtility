@@ -191,23 +191,32 @@ def wsl_path(distro, windows_path):
 
 
 def build_linux_in_wsl(distro, out_dir, skip_tests):
+    """Build inside WSL from a script file: a command line crossing the Windows
+    to Linux boundary loses backslashes, quotes and variables in ways that
+    differ between wsl.exe versions, while a file with LF endings is read
+    verbatim by bash."""
     repo = wsl_path(distro, ROOT)
     out = wsl_path(distro, out_dir)
+    script_win = out_dir / ".linux-build.sh"
     steps = [
+        "#!/bin/bash",
         "set -e",
         f"cd '{repo}'",
-        "export PATH=\"$HOME/.cargo/bin:$PATH\"",
-        # A native target dir: building on /mnt/<drive> is several times slower.
-        "export CARGO_TARGET_DIR=\"$HOME/bku-target\"",
+        'export PATH="$HOME/.cargo/bin:$PATH"',
+        # A native target dir: building on /mnt/<drive> is several times
+        # slower, and sharing target/ with the Windows build would mix the two.
+        'export CARGO_TARGET_DIR="$HOME/bku-target"',
         "" if skip_tests else "cargo test --workspace",
         "cargo build --release --workspace",
         f"mkdir -p '{out}'",
-        *[f"cp \"$CARGO_TARGET_DIR/release/{b}\" '{out}/{b}'" for b in BINARIES],
-        "rustc --version > '" + out + "/.rustc-version'",
+        *[f'cp "$CARGO_TARGET_DIR/release/{b}" \'{out}/{b}\'' for b in BINARIES],
+        f"rustc --version > '{out}/.rustc-version'",
     ]
-    script = "\n".join(s for s in steps if s)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    script_win.write_text("\n".join(s for s in steps if s) + "\n", encoding="utf-8", newline="\n")
     say(f"building Linux binaries in WSL distro '{distro}'")
-    res = subprocess.run(["wsl.exe", "-d", distro, "--", "bash", "-lc", script], text=True)
+    res = subprocess.run(["wsl.exe", "-d", distro, "--", "bash", wsl_path(distro, script_win)], text=True)
+    script_win.unlink(missing_ok=True)
     if res.returncode != 0:
         die("the WSL build failed")
 
