@@ -1,6 +1,8 @@
 //! Embeds a Windows application manifest into `bkgui.exe`.
 //!
-//! Four settings, each for a concrete reason:
+//! Also compiles in the icon and version information.
+//!
+//! Four manifest settings, each for a concrete reason:
 //!
 //! * **`requireAdministrator`** — one UAC prompt at launch, after which the
 //!   process and any `bkengine` it spawns run elevated. VSS, raw-disk reads,
@@ -28,6 +30,18 @@ fn main() {
                 .dpi_awareness(DpiAwareness::PerMonitorV2),
         )
         .expect("failed to embed the application manifest");
+
+        let mut res = winresource::WindowsResource::new();
+        res.set_icon("../../assets/icon.ico");
+        res.set("ProductName", "BackupUtility");
+        res.set("FileDescription", "BackupUtility");
+        res.set("CompanyName", "LittleGroove");
+        res.set("LegalCopyright", "Licensed under the GPL-3.0-or-later");
+        res.set("OriginalFilename", "bkgui.exe");
+        res.compile()
+            .expect("failed to compile the Windows resources: is rc.exe (Windows SDK) installed?");
+
         println!("cargo:rerun-if-changed=build.rs");
+        println!("cargo:rerun-if-changed=../../assets/icon.ico");
     }
 }

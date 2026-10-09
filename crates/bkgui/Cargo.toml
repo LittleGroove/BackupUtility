@@ -1,7 +1,10 @@
 [package]
 name = "bkgui"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 description = "Desktop GUI for BackupUtility (egui). Requests elevation on launch."
 
 [[bin]]
@@ -22,7 +25,13 @@ serde_json = { workspace = true }
 # a path correctly.
 rfd = "0.14"
 
+[target.'cfg(windows)'.dependencies]
+# SetCurrentProcessExplicitAppUserModelID, so the taskbar groups and pins the
+# window under the application identity rather than the exe path.
+windows = { workspace = true, features = ["Win32_UI_Shell", "Win32_Foundation"] }
+
 [target.'cfg(windows)'.build-dependencies]
 # Embeds an application manifest (requestedExecutionLevel=requireAdministrator)
 # straight into the .exe — no rc.exe / mt.exe needed.
 embed-manifest = "1"
+winresource = { workspace = true }

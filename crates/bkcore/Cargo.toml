@@ -1,7 +1,10 @@
 [package]
 name = "bkcore"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 description = "Core backup engine: VSS snapshot, sector I/O, chunk/hash, manifest, store, USN change tracking."
 
 [dependencies]
@@ -12,6 +15,9 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+ureq = { workspace = true }
+sha2 = { workspace = true }
+self-replace = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [

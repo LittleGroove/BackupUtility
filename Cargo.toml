@@ -6,6 +6,15 @@ members = [
     "crates/bkgui",
 ]
 
+# One version for the whole product. The release tooling bumps this line, the
+# binaries embed it, and the updater compares it against the GitHub tag.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/LittleGroove/BackupUtility"
+authors = ["LittleGroove"]
+
 # Shared dependency versions live here so all crates stay in lockstep.
 [workspace.dependencies]
 blake3 = "1"
@@ -17,10 +26,19 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
+# HTTPS for the updater. rustls rather than the platform TLS so the Linux
+# binary has no OpenSSL dependency and runs on SteamOS as shipped.
+ureq = "3"
+sha2 = "0.10"
+# Replacing the running executable: rename-and-swap on Windows, rename on Unix.
+self-replace = "1"
 
 # The `windows` crate gives us Win32/VSS/Task Scheduler bindings.
 # Feature list is trimmed per-crate; this pins the version.
 windows = "0.58"
+
+# Icon and version resources for the Windows executables.
+winresource = "0.1"
 
 [profile.release]
 opt-level = 3

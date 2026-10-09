@@ -1,7 +1,10 @@
 [package]
 name = "bkengine"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 description = "Headless backup engine CLI — the binary the Windows Task Scheduler runs."
 
 [[bin]]
@@ -18,3 +21,9 @@ serde_json = { workspace = true }
 # Ctrl+C must cancel cleanly (checkpoint the save state) rather than kill the
 # process, so an interrupted run resumes instead of redoing work.
 ctrlc = "3"
+
+[target.'cfg(windows)'.build-dependencies]
+# Icon and version information in the .exe properties dialog, and the
+# longPathAware/supportedOS manifest.
+winresource = { workspace = true }
+embed-manifest = "1"
