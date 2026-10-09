@@ -593,7 +593,7 @@ checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
 name = "bkcore"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -611,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "bkengine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bkcore",
@@ -626,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "bkgui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bkcore",
