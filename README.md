@@ -61,13 +61,24 @@ Or run `bkgui` for the same thing with a window.
 
 ## Installing
 
-There is no installer. Each release on the
+Each release on the
 [releases page](https://github.com/LittleGroove/BackupUtility/releases) carries:
 
 | | |
 |---|---|
-| `BackupUtility-vX.Y.Z-windows-x86_64.zip` | Windows 10 and 11. Unzip anywhere that will stay put (scheduled tasks point at `bkengine.exe` by its absolute path), then run `bkgui.exe`. It asks for Administrator once per launch. |
-| `BackupUtility-vX.Y.Z-linux-x86_64.tar.gz` | Linux, including SteamOS. Untar and run `sh install.sh`: it puts the binaries under `~/.local/share/BackupUtility`, links them into `~/.local/bin`, and adds an application-menu entry. No root needed. Run it as root to install under `/opt` instead. The window needs the usual desktop libraries (`libxkbcommon`, `libxkbcommon-x11`, GTK 3), which every desktop distribution and SteamOS already have; `bkengine` needs nothing. |
+| `BackupUtility-vX.Y.Z-windows-x86_64.zip` | Windows 10 and 11. Unzip it and run `bkgui.exe`. It asks for Administrator, then offers to install itself to `C:\Program Files\BackupUtility` with a Start Menu entry and, if you tick it, a desktop shortcut. The copy you unzipped is removed once the installed one is running. |
+| `BackupUtility-vX.Y.Z-linux-x86_64.tar.gz` | Linux, including SteamOS. Untar it and run `./bkgui`, which installs itself the same way: under `~/.local/share/BackupUtility`, linked into `~/.local/bin`, with an application-menu entry (under `/opt` when run as root). From a terminal, or on a machine without a desktop, `sh install.sh` does the same. The window needs the usual desktop libraries (`libxkbcommon`, `libxkbcommon-x11`, GTK 3), which every desktop distribution and SteamOS already have; `bkengine` needs nothing. |
+
+The program has one home per machine because scheduled jobs are registered
+with the engine's absolute path and the updater replaces the binaries in
+place. An install re-points every registered schedule at the installed
+engine, so moving from an earlier unzipped-anywhere copy is safe. If a newer
+version is already installed, the copy you started offers to launch that one
+instead.
+
+To remove it: **Settings › Apps** on Windows, or `bkengine uninstall` on
+either platform. Jobs, settings, save states and run logs are kept unless you
+ask for them to go (the checkbox, or `--purge`).
 
 The bare `bkengine-*` / `bkgui-*` files and `SHA256SUMS` are what the updater
 downloads; you do not need them by hand.
@@ -76,6 +87,7 @@ downloads; you do not need them by hand.
 
 | | Windows | Linux as root | Linux as a user |
 |---|---|---|---|
+| the program | `%ProgramFiles%\BackupUtility` | `/opt/backuputility` | `~/.local/share/BackupUtility` |
 | jobs and settings | `%PROGRAMDATA%\BackupUtility` | `/etc/bku` | `~/.config/bku` |
 | save states and run logs | `%PROGRAMDATA%\BackupUtility\state` | `/var/lib/bku/state` | `~/.local/share/bku/state` |
 | scheduled jobs | Task Scheduler, folder `BackupUtility` | `/etc/systemd/system/bku-*.timer` | `~/.config/systemd/user/bku-*.timer` |
@@ -109,6 +121,9 @@ bkengine update --check     # is there a newer release?
 bkengine update             # install it (asks first; --yes to skip the question)
 bkengine settings set beta_updates true
 ```
+
+On Windows this needs an elevated terminal: the installed program lives under
+Program Files, which only Administrators can write to.
 
 A beta is the same build published as a pre-release. The updater ignores
 pre-releases unless asked, a beta user still gets a stable release when that

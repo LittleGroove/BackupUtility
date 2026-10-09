@@ -14,6 +14,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod installer;
+
 use bkcore::file::mirror::{self, Event, MirrorReport};
 use bkcore::file::plan::{human_bytes, CompareBy, MirrorMode};
 use bkcore::file::state::{self as filestate, Progress};
@@ -36,6 +38,18 @@ fn main() -> eframe::Result<()> {
     if let Ok(dir) = bkcore::paths::install_dir() {
         let _ = update::cleanup_old_binaries(&dir);
     }
+
+    // Started from anywhere but the program's home, this is the installer
+    // rather than the application; see `installer`.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match installer::decide(&args) {
+        installer::Launch::Install => return installer::run_install(),
+        installer::Launch::Uninstall => return installer::run_uninstall(),
+        installer::Launch::Run => {}
+    }
+    // Keep what the OS lists about the installed copy (its version, above
+    // all) in step with the binary that is actually here.
+    bkcore::install::refresh_registration();
 
     let icon = egui::IconData {
         rgba: include_bytes!("../../../assets/icon_64.rgba").to_vec(),
@@ -62,11 +76,17 @@ fn main() -> eframe::Result<()> {
 /// changes when the tool is moved, and would otherwise split pinned icons.
 #[cfg(windows)]
 fn set_app_user_model_id() {
-    use windows::core::w;
+    use windows::core::PCWSTR;
     use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
-    // SAFETY: a plain Win32 call with a static, null-terminated wide string.
+    // The installer writes the same identity into the shortcuts it creates.
+    let id: Vec<u16> = bkcore::install::APP_USER_MODEL_ID
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: a plain Win32 call with a null-terminated wide string that
+    // outlives it.
     unsafe {
-        let _ = SetCurrentProcessExplicitAppUserModelID(w!("LittleGroove.BackupUtility"));
+        let _ = SetCurrentProcessExplicitAppUserModelID(PCWSTR(id.as_ptr()));
     }
 }
 

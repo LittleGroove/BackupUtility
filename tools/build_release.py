@@ -3,8 +3,8 @@
 so it can be tested by hand before tools/publish_release.py uploads it.
 
     STAGING/v0.1.0/
-      windows-x86_64/   bkengine.exe  bkgui.exe  README.md  LICENSE     <- run these to test
-      linux-x86_64/     bkengine  bkgui  install.sh  icon.png  README.md  LICENSE
+      windows-x86_64/   bkengine.exe  bkgui.exe  README.md  LICENSE  .portable   <- run these to test
+      linux-x86_64/     bkengine  bkgui  install.sh  icon.png  README.md  LICENSE  .portable
       release/          exactly the files that get attached to the GitHub release:
                           BackupUtility-v0.1.0-windows-x86_64.zip
                           BackupUtility-v0.1.0-linux-x86_64.tar.gz
@@ -270,6 +270,12 @@ def stage_common(dest):
     shutil.copy2(ROOT / "README.md", dest / "README.md")
     if (ROOT / "LICENSE").exists():
         shutil.copy2(ROOT / "LICENSE", dest / "LICENSE")
+    # Running bkgui from the staging folder must not install it anywhere: the
+    # marker makes it run in place. Dotfiles are left out of the archives, so
+    # the published zip and tarball do not carry it. Delete it to try the
+    # installer from here (copy the folder first; the install removes its
+    # source binaries).
+    (dest / ".portable").write_text("")
 
 
 def zip_dir(src_dir, zip_path, top):

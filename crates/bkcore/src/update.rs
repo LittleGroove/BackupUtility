@@ -453,7 +453,17 @@ pub fn apply_into(
     })?;
     let sums_path = {
         let scratch = dir.join(UPDATE_DIR);
-        std::fs::create_dir_all(&scratch)?;
+        std::fs::create_dir_all(&scratch).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                err(format!(
+                    "cannot write to {}: {e} — updating the installed program needs \
+                     Administrator; run this from an elevated terminal",
+                    dir.display()
+                ))
+            } else {
+                BkError::Io(e)
+            }
+        })?;
         scratch.join(CHECKSUMS)
     };
     updater.download_to(sums_asset, &sums_path, &mut |_, _| {})?;
@@ -547,6 +557,12 @@ pub fn apply_into(
     }
     let _ = std::fs::remove_dir_all(&scratch);
 
+    // An installed copy is known to the OS (Settings > Apps on Windows);
+    // keep the version it shows current.
+    if crate::install::is_home(dir) {
+        let _ = crate::install::register_with_os(dir, &release.version.to_string());
+    }
+
     Ok(Applied {
         version: release.version,
         replaced,
@@ -596,7 +612,10 @@ fn free_old_name(target: &Path) -> PathBuf {
     first
 }
 
-fn same_file(a: &Path, b: &Path) -> bool {
+/// Do two paths name the same file or directory? Resolved by identity where
+/// both exist, so 8.3 names, junctions and case differences all agree; a
+/// plain comparison otherwise.
+pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(x), Ok(y)) => x == y,
         _ => a == b,
@@ -604,13 +623,13 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 #[cfg(unix)]
-fn make_executable(path: &Path) -> std::io::Result<()> {
+pub(crate) fn make_executable(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
 }
 
 #[cfg(not(unix))]
-fn make_executable(_path: &Path) -> std::io::Result<()> {
+pub(crate) fn make_executable(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 

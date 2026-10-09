@@ -26,6 +26,7 @@ use bkcore::file::plan::{human_bytes, CompareBy, MirrorMode};
 use bkcore::file::state::{self as filestate, SaveState};
 use bkcore::file::verify;
 use bkcore::file::Cancel;
+use bkcore::install;
 use bkcore::job::{Fidelity, Frequency, Job, JobKind, JobStore, Schedule};
 use bkcore::manifest::Manifest;
 use bkcore::opt::{self, media, optimize, OptimizeSettings};
@@ -103,6 +104,27 @@ enum Cmd {
     /// Show or change application settings (update checks, beta channel, theme).
     #[command(subcommand)]
     Settings(SettingsCmd),
+    /// Copy this program into its permanent home, add it to the menu, and
+    /// re-point scheduled jobs at it. Run from the home, it refreshes the
+    /// shortcuts and the schedules instead.
+    Install {
+        /// Also put a shortcut on the desktop.
+        #[arg(long)]
+        desktop_shortcut: bool,
+        /// Do not add a Start Menu / application menu entry.
+        #[arg(long)]
+        no_menu_shortcut: bool,
+    },
+    /// Remove the installed program, its shortcuts and its scheduled tasks.
+    /// Jobs, settings and run logs are kept unless --purge is given.
+    Uninstall {
+        /// Also delete jobs, settings, save states and run logs.
+        #[arg(long)]
+        purge: bool,
+        /// Do not ask for confirmation.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Defragment or retrim a volume, choosing the operation from the media.
     Optimize {
         /// Volume to optimize, e.g. `D:`.
@@ -462,6 +484,11 @@ fn main() -> anyhow::Result<()> {
         Cmd::Version => cmd_version(),
         Cmd::Update { check, beta, yes } => cmd_update(check, beta, yes),
         Cmd::Settings(c) => cmd_settings(c),
+        Cmd::Install {
+            desktop_shortcut,
+            no_menu_shortcut,
+        } => cmd_install(desktop_shortcut, no_menu_shortcut),
+        Cmd::Uninstall { purge, yes } => cmd_uninstall(purge, yes),
         Cmd::Optimize {
             volume,
             dry_run,
@@ -1136,6 +1163,15 @@ fn cmd_version() -> anyhow::Result<()> {
     println!("  state       {}", bkcore::paths::state_root().display());
     println!("  settings    {}", Settings::path().display());
     println!(
+        "  home        {} ({})",
+        install::home_dir().display(),
+        match install::residence() {
+            install::Residence::Installed => "this is the installed copy",
+            install::Residence::Portable => "running portable, not installed",
+            install::Residence::Elsewhere => "this copy is not the installed one",
+        }
+    );
+    println!(
         "  privileges  {}",
         if bkcore::file::sys::is_elevated() {
             if cfg!(windows) {
@@ -1150,6 +1186,77 @@ fn cmd_version() -> anyhow::Result<()> {
         }
     );
     println!("  releases    {}", update::RELEASES_URL);
+    Ok(())
+}
+
+fn cmd_install(desktop_shortcut: bool, no_menu_shortcut: bool) -> anyhow::Result<()> {
+    let source = bkcore::paths::install_dir()?;
+    let opts = install::Options {
+        desktop_shortcut,
+        menu_shortcut: !no_menu_shortcut,
+    };
+    let report = install::install(&source, &opts, &mut |step| println!("  {step}"))?;
+    println!(
+        "installed BackupUtility {} to {}",
+        bkcore::VERSION,
+        report.home.display()
+    );
+    for name in &report.rescheduled {
+        println!("  scheduled job '{name}' now runs the installed engine");
+    }
+    for w in &report.warnings {
+        println!("  warning: {w}");
+    }
+    if !install::is_home(&source) {
+        println!(
+            "  the copy in {} is no longer needed and can be deleted",
+            source.display()
+        );
+    }
+    println!("  run the window:   bkgui");
+    println!("  command line:     bkengine --help");
+    Ok(())
+}
+
+fn cmd_uninstall(purge: bool, yes: bool) -> anyhow::Result<()> {
+    let home = install::home_dir();
+    if !yes {
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!("no terminal to ask on; pass --yes to remove without a prompt");
+        }
+        print!(
+            "remove BackupUtility from {}{}? [y/N] ",
+            home.display(),
+            if purge {
+                ", and delete every job, setting, save state and run log"
+            } else {
+                ""
+            }
+        );
+        std::io::stdout().flush()?;
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            println!("nothing removed");
+            return Ok(());
+        }
+    }
+    let me = std::env::current_exe()?;
+    let opts = install::UninstallOptions { purge_data: purge };
+    let report = install::uninstall(&opts, Some(&me), &mut |step| println!("  {step}"))?;
+    for w in &report.warnings {
+        println!("  warning: {w}");
+    }
+    install::finish_uninstall(&home)?;
+    println!(
+        "removed BackupUtility from {}{}",
+        home.display(),
+        if purge {
+            ""
+        } else {
+            " (jobs, settings and run state were kept)"
+        }
+    );
     Ok(())
 }
 

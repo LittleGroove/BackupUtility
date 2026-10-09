@@ -20,6 +20,7 @@ pub mod backup;
 pub mod chunk;
 pub mod diskio;
 pub mod file;
+pub mod install;
 pub mod job;
 pub mod manifest;
 pub mod mounts;
