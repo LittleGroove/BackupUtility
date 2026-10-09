@@ -14,7 +14,9 @@
 //!   and the scan continues; the run report shows them.
 
 use super::filter::{Filter, SkipReason};
-use super::meta::{attr, tag, Entry, EntryKind, FileTime};
+#[cfg(windows)]
+use super::meta::tag;
+use super::meta::{attr, Entry, EntryKind, FileTime};
 use super::path::{self, RelPath};
 use super::sys;
 use super::Cancel;
@@ -346,6 +348,7 @@ impl EntryKind {
     /// A directory reparse point is a junction if it carries the mount-point
     /// tag, and a directory symlink otherwise. They are re-created differently,
     /// so the distinction has to survive the scan.
+    #[cfg(windows)]
     #[allow(non_snake_case)]
     fn Junction_or_symlink(reparse_tag: u32) -> EntryKind {
         if reparse_tag == tag::MOUNT_POINT {

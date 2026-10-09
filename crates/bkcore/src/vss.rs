@@ -99,5 +99,5 @@ pub fn is_elevated() -> bool {
 
 #[cfg(not(windows))]
 pub fn is_elevated() -> bool {
-    true
+    crate::file::sys::is_elevated()
 }

@@ -14,7 +14,9 @@
 //! be a whole number of sectors. Real volumes/disks always are; test images
 //! must be sized to a multiple of `SECTOR_ALIGN`.
 
-use crate::{BkError, Result, CHUNK_SIZE, SECTOR_ALIGN};
+#[cfg(windows)]
+use crate::CHUNK_SIZE;
+use crate::{BkError, Result, SECTOR_ALIGN};
 use std::alloc::{alloc_zeroed, dealloc, handle_alloc_error, Layout};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};

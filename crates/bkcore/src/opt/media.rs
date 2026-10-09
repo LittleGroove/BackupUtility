@@ -16,7 +16,9 @@
 //! detection is conservative — anything we cannot positively identify as a
 //! spinning disk is treated as if it might be solid state.
 
-use crate::{BkError, Result};
+#[cfg(windows)]
+use crate::BkError;
+use crate::Result;
 use serde::{Deserialize, Serialize};
 
 /// What the storage underneath a volume is made of.
@@ -339,36 +341,129 @@ pub fn probe(volume: &str) -> Result<VolumeInfo> {
 /// and considerably easier to obtain.
 #[cfg(not(windows))]
 pub fn probe(volume: &str) -> Result<VolumeInfo> {
-    let dev = volume
-        .trim()
-        .trim_start_matches("/dev/")
-        .trim_end_matches(|c: char| c.is_ascii_digit())
-        .to_string();
+    use crate::mounts;
+    use std::path::Path;
 
-    let rotational = std::fs::read_to_string(format!("/sys/block/{dev}/queue/rotational"))
-        .ok()
-        .map(|s| s.trim() == "1");
-    let kind = match rotational {
-        Some(true) => MediaKind::Hdd,
-        Some(false) => MediaKind::Ssd,
-        None => MediaKind::Unknown,
+    let text = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+    let mounts = mounts::parse(&text);
+    let v = volume.trim();
+
+    // Accept a device (`/dev/sda1`), a mount point, or any path on one.
+    let entry = if v.starts_with("/dev/") {
+        mounts.iter().find(|m| m.source == v).cloned()
+    } else {
+        crate::file::sys::nearest_existing(Path::new(v))
+            .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
+            .and_then(|p| mounts::find(&mounts, &p.to_string_lossy()).cloned())
+    };
+    let (source, mount_point, filesystem) = match &entry {
+        Some(m) => (
+            m.source.clone(),
+            m.mount_point.clone(),
+            Some(m.fstype.clone()),
+        ),
+        None => (v.to_string(), v.to_string(), None),
+    };
+
+    let disk = parent_disk(source.trim_start_matches("/dev/"));
+    let kind = match read_sys(&disk, "queue/rotational").as_deref() {
+        Some("1") => MediaKind::Hdd,
+        Some("0") => MediaKind::Ssd,
+        _ => MediaKind::Unknown,
     };
     // A non-zero discard granularity means the device accepts TRIM.
-    let trim = std::fs::read_to_string(format!("/sys/block/{dev}/queue/discard_granularity"))
-        .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
+    let trim = read_sys(&disk, "queue/discard_granularity")
+        .and_then(|s| s.parse::<u64>().ok())
         .map(|g| g > 0)
         .unwrap_or(false);
+    let (bytes_per_cluster, total_clusters, free_clusters) = match statvfs(&mount_point) {
+        Some((bpc, total, free)) => (Some(bpc), Some(total), Some(free)),
+        None => (None, None, None),
+    };
 
     Ok(VolumeInfo {
-        volume: volume.trim().to_string(),
+        volume: if entry.is_some() {
+            mount_point
+        } else {
+            v.to_string()
+        },
         kind,
         trim,
-        filesystem: None,
-        bytes_per_cluster: None,
-        total_clusters: None,
-        free_clusters: None,
+        filesystem,
+        bytes_per_cluster,
+        total_clusters,
+        free_clusters,
     })
+}
+
+#[cfg(not(windows))]
+fn read_sys(disk: &str, leaf: &str) -> Option<String> {
+    std::fs::read_to_string(format!("/sys/block/{disk}/{leaf}"))
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+/// The whole-disk device behind a partition, from sysfs: `/sys/class/block/<p>`
+/// resolves to `.../<disk>/<p>` for a partition. Falls back to the naming
+/// convention when sysfs is unavailable.
+#[cfg(not(windows))]
+fn parent_disk(dev: &str) -> String {
+    if let Ok(real) = std::fs::canonicalize(format!("/sys/class/block/{dev}")) {
+        if real.join("partition").exists() {
+            if let Some(parent) = real
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+            {
+                return parent.to_string();
+            }
+        }
+        return dev.to_string();
+    }
+    crate::mounts::disk_of_partition(dev)
+}
+
+/// `(fragment size, total blocks, blocks available to us)` for a mount point.
+#[cfg(not(windows))]
+fn statvfs(path: &str) -> Option<(u32, u64, u64)> {
+    let c = std::ffi::CString::new(path).ok()?;
+    // SAFETY: `c` is a valid C string and `st` is a live out-param of exactly
+    // the type statvfs fills in.
+    unsafe {
+        let mut st: libc::statvfs = std::mem::zeroed();
+        if libc::statvfs(c.as_ptr(), &mut st) != 0 {
+            return None;
+        }
+        Some((st.f_frsize as u32, st.f_blocks as u64, st.f_bavail as u64))
+    }
+}
+
+/// Every mounted volume worth showing: the drive letters on Windows, the
+/// block-device-backed filesystems on Linux. Sorted by name.
+pub fn list_volumes() -> Vec<VolumeInfo> {
+    #[cfg(windows)]
+    {
+        ('A'..='Z')
+            .filter(|l| std::path::Path::new(&format!("{l}:\\")).exists())
+            .filter_map(|l| probe(&l.to_string()).ok())
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        let text = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+        let mut seen = std::collections::HashSet::new();
+        let mut out: Vec<VolumeInfo> = crate::mounts::parse(&text)
+            .into_iter()
+            .filter(|m| {
+                m.source.starts_with("/dev/") && crate::mounts::is_real_filesystem(&m.fstype)
+            })
+            // A bind mount lists the same device twice; keep the first.
+            .filter(|m| seen.insert(m.source.clone()))
+            .filter_map(|m| probe(&m.mount_point).ok())
+            .collect();
+        out.sort_by(|a, b| a.volume.cmp(&b.volume));
+        out
+    }
 }
 
 #[cfg(test)]

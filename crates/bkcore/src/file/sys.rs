@@ -215,10 +215,16 @@ mod imp {
         ))
     }
 
-    /// Not determined on Unix; the caller falls back to a forgiving timestamp
-    /// tolerance. (A real implementation would parse `/proc/self/mountinfo`.)
-    pub fn filesystem_name(_path: &Path) -> Option<String> {
-        None
+    /// The filesystem type holding `path`, from `/proc/self/mounts`: `ext4`,
+    /// `ntfs3`, `vfat`, `exfat`, ... The path need not exist yet (a
+    /// destination folder usually does not); the nearest existing ancestor
+    /// decides.
+    pub fn filesystem_name(path: &Path) -> Option<String> {
+        let text = std::fs::read_to_string("/proc/self/mounts").ok()?;
+        let mounts = crate::mounts::parse(&text);
+        let probe = nearest_existing(path)?;
+        let canon = std::fs::canonicalize(&probe).unwrap_or(probe);
+        crate::mounts::find(&mounts, &canon.to_string_lossy()).map(|m| m.fstype.clone())
     }
 
     /// Bytes available on the filesystem holding `path`, via `statvfs`.
@@ -268,6 +274,21 @@ pub use imp::{
 #[cfg(windows)]
 pub use imp::{wide, OwnedHandle};
 
+/// `path` itself if it exists, else its closest existing ancestor. A
+/// destination folder usually does not exist before the first run, but the
+/// volume it will live on does.
+pub fn nearest_existing(path: &Path) -> Option<std::path::PathBuf> {
+    let mut p = path.to_path_buf();
+    loop {
+        if p.exists() {
+            return Some(p);
+        }
+        if !p.pop() {
+            return None;
+        }
+    }
+}
+
 /// Pick a timestamp comparison tolerance from the destination's filesystem.
 ///
 /// Called once per run, not per file.
@@ -284,13 +305,20 @@ pub fn time_tolerance_for(path: &Path) -> u64 {
 /// re-copy the entire tree on every run.
 pub fn tolerance_for_filesystem(name: Option<&str>) -> u64 {
     use super::meta::*;
-    match name {
-        Some("NTFS") | Some("ReFS") => TOLERANCE_NTFS,
-        Some("exFAT") => TOLERANCE_EXFAT,
-        Some(fs) if fs.starts_with("FAT") => TOLERANCE_FAT,
+    let Some(name) = name else {
         // Unknown or network filesystem: be forgiving. Re-copying a file we
         // did not need to is wasteful; re-copying the whole tree every night
         // because of a 1 ms rounding difference is unusable.
+        return TOLERANCE_UNKNOWN;
+    };
+    // Windows reports `NTFS`; Linux reports `ntfs3` (kernel) or `fuseblk`
+    // (ntfs-3g, which is also any other FUSE filesystem, so it stays unknown).
+    match name.to_ascii_lowercase().as_str() {
+        "ntfs" | "ntfs3" | "refs" | "ext4" | "xfs" | "btrfs" | "f2fs" | "zfs" | "bcachefs"
+        | "tmpfs" | "apfs" => TOLERANCE_NTFS,
+        "exfat" => TOLERANCE_EXFAT,
+        "ext2" | "ext3" | "hfsplus" | "jfs" | "reiserfs" => TOLERANCE_SECOND,
+        fs if fs.starts_with("fat") || fs == "vfat" || fs == "msdos" => TOLERANCE_FAT,
         _ => TOLERANCE_UNKNOWN,
     }
 }

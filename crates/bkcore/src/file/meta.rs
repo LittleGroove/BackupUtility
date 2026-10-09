@@ -103,6 +103,8 @@ impl From<std::time::SystemTime> for FileTime {
 pub const TOLERANCE_NTFS: u64 = 0;
 pub const TOLERANCE_EXFAT: u64 = 10_000_000; // 10 ms
 pub const TOLERANCE_FAT: u64 = 2_000_000_000; // 2 s
+/// ext2, ext3, HFS+ and friends store whole seconds.
+pub const TOLERANCE_SECOND: u64 = 1_000_000_000;
 /// A forgiving default for filesystems we could not identify.
 pub const TOLERANCE_UNKNOWN: u64 = 2_000_000_000;
 

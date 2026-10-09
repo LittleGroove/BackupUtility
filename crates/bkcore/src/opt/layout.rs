@@ -28,7 +28,9 @@
 //! * Nothing here ever changes file *contents*. The worst case of a failed
 //!   move is that the file stays where it was.
 
-use super::extents::{self, Extent, FileLayout, FreeMap};
+use super::extents::{self, FileLayout};
+#[cfg(windows)]
+use super::extents::{Extent, FreeMap};
 use super::media::VolumeInfo;
 use crate::file::path::RelPath;
 use crate::file::Cancel;

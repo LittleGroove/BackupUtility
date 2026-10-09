@@ -1217,6 +1217,16 @@ mod tests {
             e.created = Some(FileTime::from_filetime(md.creation_time()));
             e.accessed = Some(FileTime::from_filetime(md.last_access_time()));
         }
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::MetadataExt;
+            e.mode = md.mode();
+            e.modified = FileTime::from_unix_secs_nanos(md.mtime(), md.mtime_nsec() as u32);
+            e.accessed = Some(FileTime::from_unix_secs_nanos(
+                md.atime(),
+                md.atime_nsec() as u32,
+            ));
+        }
         e
     }
 
@@ -1343,7 +1353,12 @@ mod tests {
             "NTFS stores 100 ns ticks, so this must match exactly"
         );
         #[cfg(not(windows))]
-        assert!(got.modified.close_to(e.modified, 1_000));
+        assert!(
+            got.modified.close_to(e.modified, 1_000),
+            "utimensat should land within a microsecond: got {} want {}",
+            got.modified,
+            e.modified
+        );
     }
 
     #[test]

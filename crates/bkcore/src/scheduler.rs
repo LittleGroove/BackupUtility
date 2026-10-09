@@ -286,6 +286,7 @@ pub fn register(job: &Job, engine_exe: &Path, jobs_dir: Option<&Path>) -> Result
 }
 
 /// Encode as UTF-16LE with a byte-order mark.
+#[cfg(windows)]
 fn utf16le_with_bom(s: &str) -> Vec<u8> {
     let mut bytes = vec![0xFF, 0xFE];
     for unit in s.encode_utf16() {
@@ -338,11 +339,26 @@ pub fn is_registered(job: &Job) -> bool {
 /// properties the Windows XML does — `Persistent=true` is `StartWhenAvailable`,
 /// and the service can be niced and I/O-throttled so a nightly mirror does not
 /// make the machine unusable.
-pub fn systemd_service(job: &Job, engine_exe: &Path, jobs_dir: Option<&Path>) -> String {
+///
+/// `user` selects a user-level unit (`systemctl --user`), which is how a job is
+/// scheduled when the tool is not running as root — the normal case on
+/// SteamOS, where `sudo` has no password until the user sets one. A user unit
+/// runs as that user and must not carry `User=root`.
+pub fn systemd_service(
+    job: &Job,
+    engine_exe: &Path,
+    jobs_dir: Option<&Path>,
+    user: bool,
+) -> String {
     let (command, mut args) = action_for(job, engine_exe);
     if let Some(dir) = jobs_dir {
         args.push_str(&format!(" --jobs-dir \"{}\"", dir.display()));
     }
+    let principal = if user {
+        ""
+    } else {
+        "# Raw device access and reading other users' files both need root.\nUser=root\n"
+    };
     format!(
         "[Unit]\n\
          Description=BackupUtility job {name}\n\
@@ -353,11 +369,11 @@ pub fn systemd_service(job: &Job, engine_exe: &Path, jobs_dir: Option<&Path>) ->
          ExecStart={command} {args}\n\
          Nice=10\n\
          IOSchedulingClass=idle\n\
-         # Raw device access and reading other users' files both need root.\n\
-         User=root\n",
+         {principal}",
         name = job.name,
         command = command,
         args = args,
+        principal = principal,
     )
 }
 
@@ -444,53 +460,96 @@ pub fn crontab_line(job: &Job, engine_exe: &Path) -> Result<String> {
     Ok(format!("{spec} {command} {args}\n"))
 }
 
-/// Write the unit files and enable the timer.
+/// Where this process's units go, and whether they are user units.
+///
+/// Root installs system units; anyone else gets user units under
+/// `~/.config/systemd/user`, managed with `systemctl --user`.
+#[cfg(not(windows))]
+pub fn unit_location() -> (PathBuf, bool) {
+    if crate::file::sys::is_elevated() {
+        (PathBuf::from("/etc/systemd/system"), false)
+    } else {
+        (
+            crate::paths::xdg("XDG_CONFIG_HOME", ".config").join("systemd/user"),
+            true,
+        )
+    }
+}
+
+#[cfg(not(windows))]
+fn systemctl(user: bool) -> Command {
+    let mut c = Command::new("systemctl");
+    if user {
+        c.arg("--user");
+    }
+    c
+}
+
+#[cfg(not(windows))]
+fn unit_stem(job: &Job) -> String {
+    format!("bku-{}", sanitize(&job.name))
+}
+
+/// Write the unit files and enable (or, for a disabled job, disable) the timer.
 #[cfg(not(windows))]
 pub fn register(job: &Job, engine_exe: &Path, jobs_dir: Option<&Path>) -> Result<()> {
     if job.schedule.is_none() {
         let _ = unregister(job);
         return Ok(());
     }
-    crate::file::sys::require_elevation("installing a systemd timer")?;
-
-    let unit_dir = PathBuf::from("/etc/systemd/system");
-    let stem = format!("bku-{}", sanitize(&job.name));
+    let (unit_dir, user) = unit_location();
+    std::fs::create_dir_all(&unit_dir)?;
+    let stem = unit_stem(job);
     std::fs::write(
         unit_dir.join(format!("{stem}.service")),
-        systemd_service(job, engine_exe, jobs_dir),
+        systemd_service(job, engine_exe, jobs_dir, user),
     )?;
     std::fs::write(unit_dir.join(format!("{stem}.timer")), systemd_timer(job)?)?;
 
-    let _ = Command::new("systemctl").arg("daemon-reload").output()?;
-    let out = Command::new("systemctl")
-        .args(["enable", "--now", &format!("{stem}.timer")])
+    let _ = systemctl(user).arg("daemon-reload").output().map_err(|e| {
+        BkError::Other(anyhow::anyhow!(
+            "cannot run systemctl ({e}); is this a systemd system?"
+        ))
+    })?;
+    let verb = if job.disabled { "disable" } else { "enable" };
+    let out = systemctl(user)
+        .args([verb, "--now", &format!("{stem}.timer")])
         .output()?;
     if !out.status.success() {
         return Err(BkError::Other(anyhow::anyhow!(
-            "systemctl enable failed: {}",
+            "systemctl {verb} failed: {}",
             String::from_utf8_lossy(&out.stderr).trim()
         )));
+    }
+    if user {
+        // A user's timers only tick while that user has a session. Lingering
+        // starts the user manager at boot, so a 3am job runs with nobody
+        // logged in. Best effort: some systems want polkit approval, and the
+        // timer still works for a logged-in user without it.
+        let _ = Command::new("loginctl").arg("enable-linger").output();
     }
     Ok(())
 }
 
 #[cfg(not(windows))]
 pub fn unregister(job: &Job) -> Result<()> {
-    let stem = format!("bku-{}", sanitize(&job.name));
-    let _ = Command::new("systemctl")
+    let (unit_dir, user) = unit_location();
+    let stem = unit_stem(job);
+    let _ = systemctl(user)
         .args(["disable", "--now", &format!("{stem}.timer")])
         .output();
     for ext in ["service", "timer"] {
-        let _ = std::fs::remove_file(format!("/etc/systemd/system/{stem}.{ext}"));
+        let _ = std::fs::remove_file(unit_dir.join(format!("{stem}.{ext}")));
     }
-    let _ = Command::new("systemctl").arg("daemon-reload").output();
+    let _ = systemctl(user).arg("daemon-reload").output();
     Ok(())
 }
 
 #[cfg(not(windows))]
 pub fn run_now(job: &Job) -> Result<()> {
-    let stem = format!("bku-{}", sanitize(&job.name));
-    let out = Command::new("systemctl")
+    let (_, user) = unit_location();
+    let stem = unit_stem(job);
+    let out = systemctl(user)
         .args(["start", &format!("{stem}.service")])
         .output()?;
     if !out.status.success() {
@@ -504,8 +563,8 @@ pub fn run_now(job: &Job) -> Result<()> {
 
 #[cfg(not(windows))]
 pub fn is_registered(job: &Job) -> bool {
-    let stem = format!("bku-{}", sanitize(&job.name));
-    PathBuf::from(format!("/etc/systemd/system/{stem}.timer")).exists()
+    let (unit_dir, _) = unit_location();
+    unit_dir.join(format!("{}.timer", unit_stem(job))).exists()
 }
 
 fn sanitize(name: &str) -> String {
@@ -656,6 +715,7 @@ mod tests {
         assert!(task_xml(&job, Path::new("x"), None).is_err());
     }
 
+    #[cfg(windows)]
     #[test]
     fn the_utf16_encoding_matches_what_the_declaration_promises() {
         let bytes = utf16le_with_bom("<a/>");
@@ -672,10 +732,20 @@ mod tests {
         assert!(timer.contains("Persistent=true"), "{timer}");
         assert!(timer.contains("OnCalendar=*-*-* 03:30:00"), "{timer}");
 
-        let service = systemd_service(&job, Path::new("/usr/local/bin/bkengine"), None);
+        let service = systemd_service(&job, Path::new("/usr/local/bin/bkengine"), None, false);
         assert!(service.contains("ExecStart=/usr/local/bin/bkengine run --job"));
         assert!(service.contains("User=root"));
         assert!(service.contains("IOSchedulingClass=idle"));
+    }
+
+    #[test]
+    fn a_user_unit_does_not_ask_for_root() {
+        // SteamOS installs run as the `deck` user with user-level timers; a
+        // `User=root` line there makes systemd refuse the unit outright.
+        let job = scheduled(Frequency::Daily);
+        let unit = systemd_service(&job, Path::new("/home/deck/bku/bkengine"), None, true);
+        assert!(!unit.contains("User="), "{unit}");
+        assert!(unit.contains("ExecStart=/home/deck/bku/bkengine run --job"));
     }
 
     #[test]
