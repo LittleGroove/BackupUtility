@@ -1,0 +1,19 @@
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# Never commit real backup output or test images
+/testdata
+*.bkstore
+*.vhd
+*.img
+
+# Release staging: built artifacts live here until published, never in git
+/STAGING/
+
+# Claude portable state travels with the folder copy, not with the public repo
+# (memory files describe this machine's disks and paths)
+/.claude/
+
+# Personal working notes
+/prompt.txt

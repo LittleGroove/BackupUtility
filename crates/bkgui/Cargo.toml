@@ -1,0 +1,28 @@
+[package]
+name = "bkgui"
+version = "0.1.0"
+edition = "2021"
+description = "Desktop GUI for BackupUtility (egui). Requests elevation on launch."
+
+[[bin]]
+name = "bkgui"
+path = "src/main.rs"
+# The embedded requireAdministrator manifest means Windows refuses to launch
+# this binary unelevated, which breaks `cargo test --workspace` (it tries to
+# run every binary's test harness). There are no tests in here to run anyway.
+test = false
+
+[dependencies]
+bkcore = { path = "../bkcore" }
+eframe = "0.28"
+egui = "0.28"
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+# Native folder picker, so choosing a drive root is a click rather than typing
+# a path correctly.
+rfd = "0.14"
+
+[target.'cfg(windows)'.build-dependencies]
+# Embeds an application manifest (requestedExecutionLevel=requireAdministrator)
+# straight into the .exe — no rc.exe / mt.exe needed.
+embed-manifest = "1"

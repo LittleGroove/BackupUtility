@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bkcore",
+    "crates/bkengine",
+    "crates/bkgui",
+]
+
+# Shared dependency versions live here so all crates stay in lockstep.
+[workspace.dependencies]
+blake3 = "1"
+zstd = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+
+# The `windows` crate gives us Win32/VSS/Task Scheduler bindings.
+# Feature list is trimmed per-crate; this pins the version.
+windows = "0.58"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"   # a backup engine should die loudly, not unwind past corruption
