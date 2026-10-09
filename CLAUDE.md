@@ -35,3 +35,7 @@ then start a fresh session so memory loads from `.claude/memory/`.
 
 No AI attribution of any kind: no `Co-Authored-By` trailers, no "generated with" lines in
 commit messages, pull requests or release notes. Subject and body only.
+
+Commit after every completed change, without waiting to be asked: the release tool
+refuses to build from a dirty tree, and small commits keep the history useful. One
+commit per logical change; unrelated fixes get their own. Do not push unless asked.
