@@ -46,10 +46,16 @@ machine.
    lays everything out under `STAGING/vX.Y.Z/`. `STAGING/` is ignored by git.
 
 3. **Test from the staging folder.** `STAGING\vX.Y.Z\windows-x86_64\` is a
-   complete install: double-click `bkgui.exe` there (it asks for elevation),
-   open a job, run a dry run, check `bkengine.exe version` prints the new
-   number. For Linux, copy `linux-x86_64/` to the machine and run
-   `sh install.sh`, or test inside WSL:
+   complete install with a `.portable` marker beside the binaries, so running
+   from it does not install anything: double-click `bkgui.exe` there (it asks
+   for elevation), open a job, run a dry run, check `bkengine.exe version`
+   prints the new number. To try the installer itself, copy the folder
+   somewhere else, delete `.portable` from the copy and run `bkgui.exe`: it
+   installs to Program Files, re-points the scheduled jobs and removes the
+   copy's binaries. `bkgui.exe --uninstall` (or Settings > Apps) takes it out
+   again. A debug build never installs itself; `cargo run -p bkgui -- --install`
+   forces the dialog from one. For Linux, copy `linux-x86_64/` to the machine
+   and run `./bkgui` or `sh install.sh`, or test inside WSL:
 
    ```powershell
    wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/s/SERVICES/BackupUtility/STAGING/vX.Y.Z/linux-x86_64 && ./bkengine version && ./bkengine drives"
@@ -81,6 +87,21 @@ machine.
    powershell -ExecutionPolicy Bypass -File scripts\updater_e2e.ps1
    wsl -d Ubuntu-22.04 -u root -- bash -lc "cd /mnt/s/SERVICES/BackupUtility && CARGO_TARGET_DIR=/root/bku-target bash scripts/updater_e2e.sh"
    ```
+
+   The installer has the same kind of script. It stages a copy of the
+   release binaries in a temporary folder, installs from it (re-pointing a
+   throwaway scheduled job), checks the shortcuts, the Settings > Apps entry
+   and the task, then uninstalls again. It refuses to run on a machine with a
+   real install or real scheduled jobs. Run it before publishing, on the
+   build from step 2:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\install_e2e.ps1      # asks for elevation
+   wsl -d Ubuntu-22.04 -u root -- bash -lc "cd /mnt/s/SERVICES/BackupUtility && CARGO_TARGET_DIR=/root/bku-target bash scripts/install_e2e.sh"
+   ```
+
+   On Linux the script tests the layout of whoever runs it: root gets `/opt`,
+   a user gets `~/.local`.
 
 ## What a release contains
 
