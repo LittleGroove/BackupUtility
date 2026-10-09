@@ -265,6 +265,18 @@ fn escape(s: &str) -> String {
 ///
 /// A job with no schedule has any stale task removed instead, so turning a
 /// schedule off in the GUI actually stops the job running.
+/// `schtasks`, without the console window that a child console process
+/// otherwise flashes up when the parent is the GUI (installing re-points
+/// every job, so it would flash once per job).
+#[cfg(windows)]
+fn schtasks() -> Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut c = Command::new("schtasks");
+    c.creation_flags(CREATE_NO_WINDOW);
+    c
+}
+
 #[cfg(windows)]
 pub fn register(job: &Job, engine_exe: &Path, jobs_dir: Option<&Path>) -> Result<()> {
     if job.schedule.is_none() {
@@ -280,7 +292,7 @@ pub fn register(job: &Job, engine_exe: &Path, jobs_dir: Option<&Path>) -> Result
     let tmp = std::env::temp_dir().join(format!("bku_task_{}.xml", sanitize(&job.name)));
     std::fs::write(&tmp, utf16le_with_bom(&xml))?;
 
-    let out = Command::new("schtasks")
+    let out = schtasks()
         .args([
             "/Create",
             "/TN",
@@ -316,7 +328,7 @@ fn utf16le_with_bom(s: &str) -> Vec<u8> {
 /// Remove a job's scheduled task. Absent is success.
 #[cfg(windows)]
 pub fn unregister(job: &Job) -> Result<()> {
-    let _ = Command::new("schtasks")
+    let _ = schtasks()
         .args(["/Delete", "/TN", &job.task_name(), "/F"])
         .output()?;
     Ok(())
@@ -325,7 +337,7 @@ pub fn unregister(job: &Job) -> Result<()> {
 /// Trigger a registered task immediately.
 #[cfg(windows)]
 pub fn run_now(job: &Job) -> Result<()> {
-    let out = Command::new("schtasks")
+    let out = schtasks()
         .args(["/Run", "/TN", &job.task_name()])
         .output()?;
     if !out.status.success() {
@@ -340,7 +352,7 @@ pub fn run_now(job: &Job) -> Result<()> {
 /// Is a task registered for this job?
 #[cfg(windows)]
 pub fn is_registered(job: &Job) -> bool {
-    Command::new("schtasks")
+    schtasks()
         .args(["/Query", "/TN", &job.task_name()])
         .output()
         .map(|o| o.status.success())

@@ -86,7 +86,11 @@ pub fn restrict_to_admins(path: &std::path::Path) {
         } else {
             ("*S-1-5-32-544:F", "*S-1-5-18:F", "*S-1-5-32-545:R")
         };
+        use std::os::windows::process::CommandExt;
+        // No console window flashing up when the parent is the GUI.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let _ = std::process::Command::new("icacls")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg(path)
             .args([
                 "/inheritance:r",
